@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -17,9 +17,7 @@ import {
   Gift,
   Lock,
   Unlock,
-  Coffee,
-  BookOpen,
-  Ticket,
+  AlertCircle,
 } from "lucide-react";
 import badgesCatalog from "../badges.json";
 
@@ -50,45 +48,21 @@ interface UserProfile {
   role?: string | null;
 }
 
-interface SponsorReward {
+interface RewardCampaign {
   id: string;
-  sponsor: string;
-  offer: string;
-  description: string;
-  requiredBadges: number;
-  promoCode: string;
-  icon: "coffee" | "book" | "ticket";
+  title: string;
+  description?: string | null;
+  required_badges: number;
+  expires_at?: string | null;
 }
 
-const SPONSOR_REWARDS: SponsorReward[] = [
-  {
-    id: "kordon-coffee",
-    sponsor: "Kordon & Kampüs Kahvecisi",
-    offer: "%20 İndirim Kuponu",
-    description: "Tüm filtre kahve ve soğuk içeceklerde öğrenci cüzdanına özel anında indirim.",
-    requiredBadges: 1,
-    promoCode: "COMU-WEB3-20",
-    icon: "coffee",
-  },
-  {
-    id: "terzioglu-copy",
-    sponsor: "Terzioğlu Kırtasiye & Baskı",
-    offer: "Ücretsiz 50 Sayfa Çıktı",
-    description: "Vize ve final haftalarında ders notu ve proje çıktılarında geçerli.",
-    requiredBadges: 2,
-    promoCode: "COMU-PRINT-50",
-    icon: "book",
-  },
-  {
-    id: "vip-hackathon",
-    sponsor: "ÇOMÜ Teknoloji Toplulukları",
-    offer: "Ücretsiz Kahve + VIP Etkinlik Önceliği",
-    description: "Sınırlı kontenjanlı teknik geziler ve hackathonlarda öncelikli katılım hakkı.",
-    requiredBadges: 3,
-    promoCode: "COMU-VIP-PASS",
-    icon: "ticket",
-  },
-];
+interface StudentCoupon {
+  id: string;
+  reward_id: string;
+  code: string;
+  status?: string;
+  used_at?: string | null;
+}
 
 const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
   dev3pack: {
@@ -128,21 +102,24 @@ function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
 
 export default function Home() {
   const { publicKey, signMessage } = useWallet();
+  const prevWalletRef = useRef<string | null>(null);
+
   const [events, setEvents] = useState<EventItem[]>([]);
   const [myBadges, setMyBadges] = useState<BadgeItem[]>([]);
+  const [rewards, setRewards] = useState<RewardCampaign[]>([]);
+  const [myCoupons, setMyCoupons] = useState<StudentCoupon[]>([]);
+  const [couponLoadingId, setCouponLoadingId] = useState<string | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // İsim düzenleme state'leri
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [savingName, setSavingName] = useState(false);
 
-  // Açık kupon kodu gösterimi
-  const [revealedRewardId, setRevealedRewardId] = useState<string | null>(null);
-
-  // Etkinlikleri yükle
+  // Etkinlikleri ve açık sponsor kampanyalarını yükle
   useEffect(() => {
     fetch("/api/events")
       .then((res) => res.json())
@@ -152,39 +129,94 @@ export default function Home() {
         }
       })
       .catch((err) => console.error("Etkinlikler yüklenemedi:", err));
+
+    fetch("/api/rewards")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.rewards)) {
+          setRewards(data.rewards);
+        }
+      })
+      .catch((err) => console.error("Kampanyalar yüklenemedi:", err));
   }, []);
 
-  // Mevcut JWT oturumunu ve rozetleri kontrol et
+  // Cüzdan bağlantısı, hesap değişimi ve logout yönetimi
   useEffect(() => {
-    if (!publicKey) {
+    const currentWallet = publicKey ? publicKey.toBase58() : null;
+    const previousWallet = prevWalletRef.current;
+    prevWalletRef.current = currentWallet;
+
+    const logoutServerSession = async () => {
+      try {
+        await fetch("/api/auth/logout", { method: "POST" });
+      } catch {
+        // Ağ hatası olsa bile yerel state temizlenir
+      }
       setUserProfile(null);
+      setMyCoupons([]);
+    };
+
+    // Cüzdan bağlantısı kesildiyse sunucu oturumunu kapat
+    if (!currentWallet) {
+      if (previousWallet) {
+        logoutServerSession();
+      } else {
+        setUserProfile(null);
+        setMyCoupons([]);
+      }
       setMyBadges([]);
       return;
     }
 
-    fetch("/api/auth/me")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.user?.wallet_address === publicKey.toBase58()) {
-          setUserProfile(data.user);
-          setNameInput(data.user.name || "");
-        } else {
-          setUserProfile(null);
-        }
-      })
-      .catch(() => setUserProfile(null));
+    // Farklı bir cüzdana geçildiyse önce eski oturumu kapat
+    if (previousWallet && previousWallet !== currentWallet) {
+      logoutServerSession();
+    } else {
+      fetch("/api/auth/me")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.user?.wallet_address === currentWallet) {
+            setUserProfile(data.user);
+            setNameInput(data.user.name || "");
+          } else if (data.success && data.user) {
+            logoutServerSession();
+          } else {
+            setUserProfile(null);
+          }
+        })
+        .catch(() => setUserProfile(null));
+    }
 
-    fetch(`/api/badges?wallet=${publicKey.toBase58()}`)
+    // Cüzdana ait doğrulanmış rozetleri çek
+    fetch(`/api/badges?wallet=${encodeURIComponent(currentWallet)}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.badges)) {
           setMyBadges(data.badges);
+        } else {
+          setMyBadges([]);
+        }
+      })
+      .catch(() => setMyBadges([]));
+  }, [publicKey]);
+
+  // Oturum açıldığında öğrencinin mevcut kuponlarını çek
+  useEffect(() => {
+    if (!userProfile) {
+      setMyCoupons([]);
+      return;
+    }
+
+    fetch("/api/coupons")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.coupons)) {
+          setMyCoupons(data.coupons);
         }
       })
       .catch(() => {});
-  }, [publicKey]);
+  }, [userProfile]);
 
-  // Phantom ile mesaj imzalayıp Web3 oturumu açma
   const handleWalletLogin = async () => {
     if (!publicKey || !signMessage) {
       setAuthError("Cüzdan mesaj imzalamayı desteklemiyor.");
@@ -240,7 +272,6 @@ export default function Home() {
     }
   };
 
-  // Profil adını kaydetme
   const handleSaveName = async () => {
     if (!nameInput.trim()) return;
     setSavingName(true);
@@ -268,14 +299,39 @@ export default function Home() {
     }
   };
 
-  const renderRewardIcon = (type: SponsorReward["icon"]) => {
-    switch (type) {
-      case "coffee":
-        return <Coffee className="w-5 h-5" />;
-      case "book":
-        return <BookOpen className="w-5 h-5" />;
-      case "ticket":
-        return <Ticket className="w-5 h-5" />;
+  const handleClaimCoupon = async (rewardId: string) => {
+    if (!userProfile) {
+      setCouponError("Kupon oluşturmak için önce cüzdanınızla imzalı oturum açın.");
+      return;
+    }
+
+    setCouponLoadingId(rewardId);
+    setCouponError(null);
+
+    try {
+      const res = await fetch("/api/coupons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reward_id: rewardId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success || !data.coupon) {
+        throw new Error(data.message || "Kupon oluşturulamadı.");
+      }
+
+      setMyCoupons((prev) => {
+        const exists = prev.some((c) => c.reward_id === rewardId);
+        if (exists) {
+          return prev.map((c) => (c.reward_id === rewardId ? data.coupon : c));
+        }
+        return [...prev, data.coupon];
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Kupon alma başarısız.";
+      setCouponError(msg);
+    } finally {
+      setCouponLoadingId(null);
     }
   };
 
@@ -345,7 +401,11 @@ export default function Home() {
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-slate-200">
                       <span>
-                        Öğrenci:{" "}
+                        {userProfile.role === "admin"
+                          ? "Admin:"
+                          : userProfile.role === "sponsor"
+                          ? "Sponsor:"
+                          : "Öğrenci:"}{" "}
                         <strong className="text-purple-300">
                           {userProfile.name || "İsim Belirtilmedi"}
                         </strong>
@@ -396,7 +456,7 @@ export default function Home() {
 
         {/* Kullanıcının Kazandığı Rozetler */}
         {publicKey && (
-          <div className="mb-12">
+          <div id="koleksiyonum" className="mb-12 scroll-mt-8">
             <div className="flex items-center gap-2 mb-4">
               <Sparkles className="w-5 h-5 text-yellow-400" />
               <h2 className="text-lg font-bold">Koleksiyonum ({badgeCount} Rozet)</h2>
@@ -429,7 +489,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Kampüs Sponsor İndirimleri & Ödül Kataloğu */}
+        {/* Kampüs Sponsor İndirimleri & Ödüller (Gerçek API) */}
         <div className="mb-12">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <div className="flex items-center gap-2">
@@ -441,102 +501,136 @@ export default function Home() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {SPONSOR_REWARDS.map((reward) => {
-              const isUnlocked = badgeCount >= reward.requiredBadges;
-              const missing = Math.max(0, reward.requiredBadges - badgeCount);
-              const progressPct = Math.min(100, Math.round((badgeCount / reward.requiredBadges) * 100));
-              const isRevealed = revealedRewardId === reward.id;
+          {couponError && (
+            <div className="mb-4 p-3 bg-red-950/50 border border-red-500/40 rounded-lg text-xs text-red-300 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{couponError}</span>
+            </div>
+          )}
 
-              return (
-                <div
-                  key={reward.id}
-                  className={`rounded-xl p-5 border flex flex-col justify-between transition ${
-                    isUnlocked
-                      ? "bg-slate-900 border-emerald-500/40 shadow-lg shadow-emerald-950/20"
-                      : "bg-slate-900/60 border-slate-800"
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-3">
-                      <div
-                        className={`p-2 rounded-lg ${
-                          isUnlocked
-                            ? "bg-emerald-500/20 text-emerald-400"
-                            : "bg-slate-800 text-slate-400"
-                        }`}
-                      >
-                        {renderRewardIcon(reward.icon)}
+          {rewards.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {rewards.map((reward) => {
+                const isUnlocked = badgeCount >= reward.required_badges;
+                const missing = Math.max(0, reward.required_badges - badgeCount);
+                const progressPct = Math.min(
+                  100,
+                  Math.round((badgeCount / reward.required_badges) * 100)
+                );
+                const existingCoupon = myCoupons.find((c) => c.reward_id === reward.id);
+                const isUsed = existingCoupon?.status === "used" || Boolean(existingCoupon?.used_at);
+
+                return (
+                  <div
+                    key={reward.id}
+                    className={`rounded-xl p-5 border flex flex-col justify-between transition ${
+                      isUnlocked
+                        ? "bg-slate-900 border-emerald-500/40 shadow-lg shadow-emerald-950/20"
+                        : "bg-slate-900/60 border-slate-800"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div
+                          className={`p-2 rounded-lg ${
+                            isUnlocked
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : "bg-slate-800 text-slate-400"
+                          }`}
+                        >
+                          <Gift className="w-5 h-5" />
+                        </div>
+
+                        <span
+                          className={`text-[11px] font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1 ${
+                            isUnlocked
+                              ? "bg-emerald-500/20 text-emerald-300"
+                              : "bg-slate-800 text-slate-400"
+                          }`}
+                        >
+                          {isUnlocked ? (
+                            <>
+                              <Unlock className="w-3 h-3" />
+                              <span>Kilit Açıldı</span>
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="w-3 h-3" />
+                              <span>{reward.required_badges} Rozet</span>
+                            </>
+                          )}
+                        </span>
                       </div>
 
-                      <span
-                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1 ${
-                          isUnlocked
-                            ? "bg-emerald-500/20 text-emerald-300"
-                            : "bg-slate-800 text-slate-400"
-                        }`}
-                      >
-                        {isUnlocked ? (
-                          <>
-                            <Unlock className="w-3 h-3" />
-                            <span>Kilit Açıldı</span>
-                          </>
-                        ) : (
-                          <>
-                            <Lock className="w-3 h-3" />
-                            <span>{reward.requiredBadges} Rozet</span>
-                          </>
-                        )}
-                      </span>
+                      <h3 className="text-base font-bold text-white">{reward.title}</h3>
+                      {reward.description && (
+                        <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                          {reward.description}
+                        </p>
+                      )}
                     </div>
 
-                    <p className="text-xs text-slate-400">{reward.sponsor}</p>
-                    <h3 className="text-base font-bold text-white mt-0.5">{reward.offer}</h3>
-                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                      {reward.description}
-                    </p>
-                  </div>
-
-                  <div className="mt-5 pt-4 border-t border-slate-800/80">
-                    {isUnlocked ? (
-                      isRevealed ? (
-                        <div className="p-2.5 bg-emerald-950/70 border border-emerald-500/40 rounded-lg text-center">
-                          <span className="block text-[10px] text-emerald-300 uppercase tracking-wider">
-                            Sponsor Kasa Kodu
-                          </span>
-                          <span className="font-mono font-bold text-sm text-white select-all">
-                            {reward.promoCode}
-                          </span>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setRevealedRewardId(reward.id)}
-                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition cursor-pointer"
+                    <div className="mt-5 pt-4 border-t border-slate-800/80">
+                      {existingCoupon ? (
+                        <div
+                          className={`p-2.5 border rounded-lg text-center ${
+                            isUsed
+                              ? "bg-slate-950 border-slate-700"
+                              : "bg-emerald-950/70 border-emerald-500/40"
+                          }`}
                         >
-                          İndirim Kodunu Göster
-                        </button>
-                      )
-                    ) : (
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] text-slate-400">
-                          <span>İlerleme</span>
-                          <span>
-                            {badgeCount}/{reward.requiredBadges} ({missing} rozet daha)
+                          <span className="block text-[10px] text-emerald-300 uppercase tracking-wider">
+                            {isUsed ? "Kullanılmış Kupon" : "Tek Kullanımlık Kupon Kodu"}
+                          </span>
+                          <span
+                            className={`font-mono font-bold text-sm select-all ${
+                              isUsed ? "text-slate-500 line-through" : "text-white"
+                            }`}
+                          >
+                            {existingCoupon.code}
                           </span>
                         </div>
-                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-purple-500 rounded-full transition-all"
-                            style={{ width: `${progressPct}%` }}
-                          />
+                      ) : isUnlocked ? (
+                        <button
+                          onClick={() => handleClaimCoupon(reward.id)}
+                          disabled={couponLoadingId === reward.id}
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold py-2.5 rounded-lg transition cursor-pointer inline-flex items-center justify-center gap-2"
+                        >
+                          {couponLoadingId === reward.id ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Kupon Oluşturuluyor...</span>
+                            </>
+                          ) : (
+                            <span>Kupon Kodumu Oluştur</span>
+                          )}
+                        </button>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] text-slate-400">
+                            <span>İlerleme</span>
+                            <span>
+                              {badgeCount}/{reward.required_badges} ({missing} rozet daha)
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-purple-500 rounded-full transition-all"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-5 bg-slate-900/40 border border-dashed border-slate-800 rounded-xl text-center text-sm text-slate-400">
+              Şu an aktif sponsor kampanyası bulunmuyor. Sponsorlar kampanya açtığında burada listelenecektir.
+            </div>
+          )}
         </div>
 
         {/* Tasarım Kataloğu: Kazanılabilir Kampüs Rozetleri */}
@@ -581,7 +675,10 @@ export default function Home() {
               >
                 <div>
                   <span className="text-xs text-purple-400 font-medium">
-                    {new Date(ev.event_date).toLocaleDateString("tr-TR")}
+                    {new Date(ev.event_date).toLocaleString("tr-TR", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
                   </span>
                   <h3 className="text-lg font-semibold mt-1">{ev.title}</h3>
                   <p className="text-sm text-slate-400 mt-2">{ev.description}</p>
@@ -592,7 +689,7 @@ export default function Home() {
                   className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-purple-400 hover:text-purple-300"
                 >
                   <Award className="w-4 h-4" />
-                  <span>"Etkinliğe Katıl / Rozet Al"</span>
+                  <span>Etkinliğe Katıl / Rozet Al</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>
@@ -600,7 +697,7 @@ export default function Home() {
           </div>
         ) : (
           <p className="text-sm text-slate-500">
-            Henüz veritabanında etkinlik bulunamadı veya Supabase bağlantı anahtarları (.env.local) bekleniyor.
+            Henüz veritabanında etkinlik bulunamadı.
           </p>
         )}
       </div>
