@@ -310,17 +310,35 @@ function ClaimContent() {
 
     const scannerId = "claim-inline-qr-reader";
     const container = document.getElementById(scannerId);
-    if (!container) return;
+    if (container) {
+      container.innerHTML = "";
+    }
 
+    const html5QrCode = new Html5Qrcode(scannerId);
     let isCancelled = false;
     isProcessingQrRef.current = false;
     setScanError(null);
     setCameraError(null);
 
-    const session = startScannerSession(
-      container,
-      () => new Html5Qrcode(scannerId),
-      scanner => scanner.start(
+    const safeStopScanner = async () => {
+      try {
+        // 2 = SCANNING, 3 = PAUSED (html5-qrcode Html5QrcodeScannerState)
+        const state = html5QrCode.getState();
+        if (state === 2 || state === 3) {
+          await html5QrCode.stop();
+        }
+      } catch {
+        // Zaten durmuşsa hatayı yoksay
+      }
+      try {
+        html5QrCode.clear();
+      } catch {
+        // DOM temizlenmişse yoksay
+      }
+    };
+
+    html5QrCode
+      .start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 220, height: 220 } },
         (decodedText) => {
@@ -338,12 +356,10 @@ function ClaimContent() {
               setScanError(null);
               setActiveToken(scannedToken);
 
-              session.stop()
-                .finally(() => {
-                  if (isCancelled) return;
-                  setShowScanner(false);
-                  submitClaim(scannedToken, false);
-                });
+              safeStopScanner().finally(() => {
+                setShowScanner(false);
+                submitClaim(scannedToken, false);
+              });
               return;
             }
 
@@ -357,8 +373,11 @@ function ClaimContent() {
         },
         () => {}
       )
-    );
-    session.ready
+      .then(() => {
+        if (isCancelled) {
+          safeStopScanner();
+        }
+      })
       .catch((err) => {
         if (!isCancelled) {
           console.error("Kamera başlatılamadı:", err);
@@ -368,7 +387,7 @@ function ClaimContent() {
 
     return () => {
       isCancelled = true;
-      void session.stop();
+      safeStopScanner();
     };
   }, [showScanner, eventId, submitClaim]);
 
