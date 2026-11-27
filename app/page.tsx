@@ -12,6 +12,9 @@ import {
   Camera,
   ShieldCheck,
   Loader2,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import badgesCatalog from "../badges.json";
 
@@ -86,6 +89,11 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // İsim düzenleme state'leri
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+  const [savingName, setSavingName] = useState(false);
+
   // Etkinlikleri yükle
   useEffect(() => {
     fetch("/api/events")
@@ -111,6 +119,7 @@ export default function Home() {
       .then((data) => {
         if (data.success && data.user?.wallet_address === publicKey.toBase58()) {
           setUserProfile(data.user);
+          setNameInput(data.user.name || "");
         } else {
           setUserProfile(null);
         }
@@ -140,7 +149,6 @@ export default function Home() {
     try {
       const walletAddress = publicKey.toBase58();
 
-      // 1. Sunucudan tek kullanımlık nonce al
       const nonceRes = await fetch("/api/auth/nonce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -152,11 +160,9 @@ export default function Home() {
         throw new Error(nonceData.message || "Nonce alınamadı.");
       }
 
-      // 2. Phantom cüzdan ile mesajı imzala
       const encodedMessage = new TextEncoder().encode(nonceData.message);
       const signatureBytes = await signMessage(encodedMessage);
 
-      // 3. İmzayı doğrulayıp kullanıcı kaydını/oturumunu oluştur
       const loginRes = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -173,6 +179,7 @@ export default function Home() {
       }
 
       setUserProfile(loginData.user);
+      setNameInput(loginData.user.name || "");
     } catch (err: unknown) {
       const rawMsg = err instanceof Error ? err.message : "";
       if (rawMsg.toLowerCase().includes("rejected")) {
@@ -182,6 +189,34 @@ export default function Home() {
       }
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  // Profil adını kaydetme
+  const handleSaveName = async () => {
+    if (!nameInput.trim()) return;
+    setSavingName(true);
+    setAuthError(null);
+
+    try {
+      const res = await fetch("/api/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nameInput.trim() }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "İsim kaydedilemedi.");
+      }
+
+      setUserProfile(data.user);
+      setIsEditingName(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Bir hata oluştu.";
+      setAuthError(msg);
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -219,6 +254,58 @@ export default function Home() {
                     : "Cüzdan Bağlandı — Oturum Doğrulaması Bekleniyor"}
                 </span>
               </div>
+
+              {/* Doğrulanmış kullanıcı adı düzenleme alanı */}
+              {userProfile && (
+                <div className="pt-1 flex items-center justify-center gap-2">
+                  {isEditingName ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={nameInput}
+                        onChange={(e) => setNameInput(e.target.value)}
+                        placeholder="Adınız ve Soyadınız"
+                        className="bg-slate-950 border border-purple-500/50 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none"
+                      />
+                      <button
+                        onClick={handleSaveName}
+                        disabled={savingName}
+                        className="p-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-white cursor-pointer"
+                        title="Kaydet"
+                      >
+                        {savingName ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsEditingName(false);
+                          setNameInput(userProfile.name || "");
+                        }}
+                        className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 cursor-pointer"
+                        title="İptal"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-slate-200">
+                      <span>
+                        Öğrenci:{" "}
+                        <strong className="text-purple-300">
+                          {userProfile.name || "İsim Belirtilmedi"}
+                        </strong>
+                      </span>
+                      <button
+                        onClick={() => setIsEditingName(true)}
+                        className="text-xs text-slate-400 hover:text-purple-400 inline-flex items-center gap-1 underline cursor-pointer"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        <span>Düzenle</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <p className="text-xs text-slate-400 break-all">Adres: {publicKey.toBase58()}</p>
 
               {!userProfile && (
@@ -237,9 +324,10 @@ export default function Home() {
                       <span>Cüzdanı İmzala ve Giriş Yap</span>
                     )}
                   </button>
-                  {authError && <p className="text-xs text-red-400 mt-2">{authError}</p>}
                 </div>
               )}
+
+              {authError && <p className="text-xs text-red-400 mt-2">{authError}</p>}
             </div>
           ) : (
             <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
