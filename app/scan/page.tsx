@@ -15,15 +15,21 @@ export default function ScanPage() {
 
   useEffect(() => {
     const scannerId = "comu-qr-reader";
+    const container = document.getElementById(scannerId);
+    if (container) {
+      container.innerHTML = "";
+    }
+
     const html5QrCode = new Html5Qrcode(scannerId);
-    let isMounted = true;
+    let isCancelled = false;
+    let isStarted = false;
 
     html5QrCode
       .start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
-          if (isRedirectingRef.current) return;
+          if (isRedirectingRef.current || isCancelled) return;
 
           try {
             const parsed = new URL(decodedText, window.location.origin);
@@ -47,18 +53,26 @@ export default function ScanPage() {
               return;
             }
           } catch {
-            // Geçerli bir URL değilse aşağıdaki uyarıya düşer
+            // Geçerli URL değilse aşağıdaki uyarıya düşer
           }
 
-          // Harici site veya geçersiz QR kod: yönlendirme yapma, kamerayı açık tut
           setScanError("Geçersiz QR kod! Lütfen yalnızca ÇOMÜ Badge etkinlik QR kodunu okutun.");
         },
         () => {
           // Karede QR bulunamadığında sessizce devam et
         }
       )
+      .then(() => {
+        isStarted = true;
+        if (isCancelled) {
+          html5QrCode
+            .stop()
+            .then(() => html5QrCode.clear())
+            .catch(() => {});
+        }
+      })
       .catch((err) => {
-        if (isMounted) {
+        if (!isCancelled) {
           console.error("Kamera başlatılamadı:", err);
           setCameraError(
             "Kameraya erişilemedi. Tarayıcı izinlerini kontrol edin veya masaüstündeyseniz etkinlik kartından doğrudan rozet sayfasına gidin."
@@ -67,9 +81,12 @@ export default function ScanPage() {
       });
 
     return () => {
-      isMounted = false;
-      if (html5QrCode.isScanning) {
-        html5QrCode.stop().catch(() => {});
+      isCancelled = true;
+      if (isStarted) {
+        html5QrCode
+          .stop()
+          .then(() => html5QrCode.clear())
+          .catch(() => {});
       }
     };
   }, [router]);
