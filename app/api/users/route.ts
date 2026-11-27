@@ -1,3 +1,4 @@
+import { body, apiError } from "@/lib/api";
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import nacl from "tweetnacl";
@@ -8,11 +9,11 @@ import { getSession } from "@/lib/auth";
 export async function POST(request: Request) {
     try {
         const { wallet_address, nonce, signature } =
-            await request.json();
+            await body(request);
 
         if (
-            typeof wallet_address !== "string" ||
-            typeof nonce !== "string" ||
+            typeof wallet_address !== "string" || wallet_address.length > 44 ||
+            typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce) ||
             !Array.isArray(signature) ||
             signature.length !== 64 ||
             !signature.every(
@@ -91,7 +92,7 @@ export async function POST(request: Request) {
         const { error: insertError } = await supabase
             .from("users")
             .upsert(
-                { wallet_address },
+                { wallet_address, role: "student" },
                 {
                     onConflict: "wallet_address",
                     ignoreDuplicates: true
@@ -145,10 +146,7 @@ export async function POST(request: Request) {
     } catch (error) {
         console.error(error);
 
-        return NextResponse.json(
-            { success: false, message: "Login failed" },
-            { status: 500 }
-        );
+        return apiError(error);
     }
 }
 export async function PATCH(request: Request) {
@@ -162,7 +160,7 @@ export async function PATCH(request: Request) {
             );
         }
 
-        const { name } = await request.json();
+        const { name } = await body(request);
 
         if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 50) {
             return NextResponse.json(

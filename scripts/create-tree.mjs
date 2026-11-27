@@ -1,3 +1,6 @@
+import nextEnv from "@next/env";
+nextEnv.loadEnvConfig(process.cwd());
+
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 
 import {
@@ -21,13 +24,17 @@ async function main() {
 
     // 2. Solana Devnet baglantisi
     const umi = createUmi(
-        "https://api.devnet.solana.com"
+        process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"
     ).use(mplBubblegum());
 
     // 3. Mint Wallet'i yukle
-    const secretKey = Uint8Array.from(
-        JSON.parse(process.env.MINT_SECRET_KEY)
-    );
+    if (!process.env.MINT_SECRET_KEY) throw new Error("MINT_SECRET_KEY is missing");
+    const parsed = JSON.parse(process.env.MINT_SECRET_KEY);
+    if (!Array.isArray(parsed) || parsed.length !== 64 ||
+        !parsed.every(value => Number.isInteger(value) && value >= 0 && value <= 255)) {
+        throw new Error("MINT_SECRET_KEY must contain 64 bytes");
+    }
+    const secretKey = Uint8Array.from(parsed);
 
     const keypair =
         umi.eddsa.createKeypairFromSecretKey(secretKey);
