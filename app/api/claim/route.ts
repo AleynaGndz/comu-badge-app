@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const { data: existing, error: attendanceError } = await supabase.from("attendance")
       .select("id, mint_status, tx_signature, nft_asset_id").eq("user_id", user.id).eq("event_id", eventId).maybeSingle();
     if (attendanceError) throw attendanceError;
-    const attendance = existing ?? (await recordAttendance(user.id, eventId, input.qr_token ?? input.token)).attendance;
+    const attendance = existing ?? (await recordAttendance(user.id, eventId, input.qr_token ?? input.qrToken ?? input.token)).attendance;
     // Assignment cannot change after this attendance exists; re-read after the
     // transactional attendance check to avoid racing an admin badge assignment.
     const { data: currentEvent, error: currentError } = await supabase.from("events")

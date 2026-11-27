@@ -144,3 +144,23 @@ test('event creation rejects unknown badges and missing timezone before insertin
     assert.equal(h.calls.length, 1);
   }
 });
+
+test('merged frontend qrToken field reaches attendance validation', async () => {
+  const h = harness([student, { data: { id: eventId, title: 'Event', badge_key: 'android' } },
+    { data: null, error: null }, { data: { title: 'Event', badge_key: 'android' } },
+    { error: null }, { data: { id: 'job' } }]);
+  let validated = false;
+  const route = h.load('app/api/claim/route.ts', {
+    '@/lib/attendance': { recordAttendance: async (userId, id, token) => {
+      assert.equal(userId, studentId);
+      assert.equal(id, eventId);
+      assert.equal(token, 'frontend-qr-token');
+      validated = true;
+      return { attendance: { id: 'attendance' } };
+    } },
+    '@/lib/badge-catalog': { metadataForBadge: () => 'ipfs://metadata' },
+    '@/lib/claim': { processMint: async () => ({ status: 202, data: { success: false, processing: true } }) },
+  });
+  assert.equal((await route.POST(post({ eventId, walletAddress: address, qrToken: 'frontend-qr-token' }))).status, 202);
+  assert.equal(validated, true);
+});

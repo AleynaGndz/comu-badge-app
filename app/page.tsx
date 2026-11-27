@@ -9,12 +9,17 @@ import {
   Award,
   ArrowRight,
   Sparkles,
-  Camera,
   ShieldCheck,
   Loader2,
   Pencil,
   Check,
   X,
+  Gift,
+  Lock,
+  Unlock,
+  Coffee,
+  BookOpen,
+  Ticket,
 } from "lucide-react";
 import badgesCatalog from "../badges.json";
 
@@ -44,6 +49,46 @@ interface UserProfile {
   name?: string | null;
   role?: string | null;
 }
+
+interface SponsorReward {
+  id: string;
+  sponsor: string;
+  offer: string;
+  description: string;
+  requiredBadges: number;
+  promoCode: string;
+  icon: "coffee" | "book" | "ticket";
+}
+
+const SPONSOR_REWARDS: SponsorReward[] = [
+  {
+    id: "kordon-coffee",
+    sponsor: "Kordon & Kampüs Kahvecisi",
+    offer: "%20 İndirim Kuponu",
+    description: "Tüm filtre kahve ve soğuk içeceklerde öğrenci cüzdanına özel anında indirim.",
+    requiredBadges: 1,
+    promoCode: "COMU-WEB3-20",
+    icon: "coffee",
+  },
+  {
+    id: "terzioglu-copy",
+    sponsor: "Terzioğlu Kırtasiye & Baskı",
+    offer: "Ücretsiz 50 Sayfa Çıktı",
+    description: "Vize ve final haftalarında ders notu ve proje çıktılarında geçerli.",
+    requiredBadges: 2,
+    promoCode: "COMU-PRINT-50",
+    icon: "book",
+  },
+  {
+    id: "vip-hackathon",
+    sponsor: "ÇOMÜ Teknoloji Toplulukları",
+    offer: "Ücretsiz Kahve + VIP Etkinlik Önceliği",
+    description: "Sınırlı kontenjanlı teknik geziler ve hackathonlarda öncelikli katılım hakkı.",
+    requiredBadges: 3,
+    promoCode: "COMU-VIP-PASS",
+    icon: "ticket",
+  },
+];
 
 const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
   dev3pack: {
@@ -93,6 +138,9 @@ export default function Home() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [savingName, setSavingName] = useState(false);
+
+  // Açık kupon kodu gösterimi
+  const [revealedRewardId, setRevealedRewardId] = useState<string | null>(null);
 
   // Etkinlikleri yükle
   useEffect(() => {
@@ -220,20 +268,25 @@ export default function Home() {
     }
   };
 
+  const renderRewardIcon = (type: SponsorReward["icon"]) => {
+    switch (type) {
+      case "coffee":
+        return <Coffee className="w-5 h-5" />;
+      case "book":
+        return <BookOpen className="w-5 h-5" />;
+      case "ticket":
+        return <Ticket className="w-5 h-5" />;
+    }
+  };
+
   const catalogEntries = Object.entries(badgesCatalog);
+  const badgeCount = myBadges.length;
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold text-purple-400">ÇOMÜ Badge</h1>
-          <Link
-            href="/scan"
-            className="text-sm text-slate-300 hover:text-purple-400 flex items-center gap-1.5 transition"
-          >
-            <Camera className="w-4 h-4" />
-            <span>QR Okut</span>
-          </Link>
           <Link href="/admin" className="text-sm text-slate-400 hover:text-white transition">
             Yönetim & QR
           </Link>
@@ -255,7 +308,6 @@ export default function Home() {
                 </span>
               </div>
 
-              {/* Doğrulanmış kullanıcı adı düzenleme alanı */}
               {userProfile && (
                 <div className="pt-1 flex items-center justify-center gap-2">
                   {isEditingName ? (
@@ -273,7 +325,11 @@ export default function Home() {
                         className="p-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-white cursor-pointer"
                         title="Kaydet"
                       >
-                        {savingName ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                        {savingName ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Check className="w-4 h-4" />
+                        )}
                       </button>
                       <button
                         onClick={() => {
@@ -343,7 +399,7 @@ export default function Home() {
           <div className="mb-12">
             <div className="flex items-center gap-2 mb-4">
               <Sparkles className="w-5 h-5 text-yellow-400" />
-              <h2 className="text-lg font-bold">Koleksiyonum ({myBadges.length} Rozet)</h2>
+              <h2 className="text-lg font-bold">Koleksiyonum ({badgeCount} Rozet)</h2>
             </div>
 
             {myBadges.length > 0 ? (
@@ -372,6 +428,116 @@ export default function Home() {
             )}
           </div>
         )}
+
+        {/* Kampüs Sponsor İndirimleri & Ödül Kataloğu */}
+        <div className="mb-12">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <Gift className="w-5 h-5 text-emerald-400" />
+              <h2 className="text-lg font-bold">Kampüs Sponsor İndirimleri & Ödüller</h2>
+            </div>
+            <span className="text-xs text-slate-400">
+              Mevcut Bakiyen: <strong className="text-purple-300">{badgeCount} Rozet</strong>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {SPONSOR_REWARDS.map((reward) => {
+              const isUnlocked = badgeCount >= reward.requiredBadges;
+              const missing = Math.max(0, reward.requiredBadges - badgeCount);
+              const progressPct = Math.min(100, Math.round((badgeCount / reward.requiredBadges) * 100));
+              const isRevealed = revealedRewardId === reward.id;
+
+              return (
+                <div
+                  key={reward.id}
+                  className={`rounded-xl p-5 border flex flex-col justify-between transition ${
+                    isUnlocked
+                      ? "bg-slate-900 border-emerald-500/40 shadow-lg shadow-emerald-950/20"
+                      : "bg-slate-900/60 border-slate-800"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <div
+                        className={`p-2 rounded-lg ${
+                          isUnlocked
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-slate-800 text-slate-400"
+                        }`}
+                      >
+                        {renderRewardIcon(reward.icon)}
+                      </div>
+
+                      <span
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1 ${
+                          isUnlocked
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : "bg-slate-800 text-slate-400"
+                        }`}
+                      >
+                        {isUnlocked ? (
+                          <>
+                            <Unlock className="w-3 h-3" />
+                            <span>Kilit Açıldı</span>
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-3 h-3" />
+                            <span>{reward.requiredBadges} Rozet</span>
+                          </>
+                        )}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-400">{reward.sponsor}</p>
+                    <h3 className="text-base font-bold text-white mt-0.5">{reward.offer}</h3>
+                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                      {reward.description}
+                    </p>
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-slate-800/80">
+                    {isUnlocked ? (
+                      isRevealed ? (
+                        <div className="p-2.5 bg-emerald-950/70 border border-emerald-500/40 rounded-lg text-center">
+                          <span className="block text-[10px] text-emerald-300 uppercase tracking-wider">
+                            Sponsor Kasa Kodu
+                          </span>
+                          <span className="font-mono font-bold text-sm text-white select-all">
+                            {reward.promoCode}
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setRevealedRewardId(reward.id)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg transition cursor-pointer"
+                        >
+                          İndirim Kodunu Göster
+                        </button>
+                      )
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] text-slate-400">
+                          <span>İlerleme</span>
+                          <span>
+                            {badgeCount}/{reward.requiredBadges} ({missing} rozet daha)
+                          </span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-purple-500 rounded-full transition-all"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Tasarım Kataloğu: Kazanılabilir Kampüs Rozetleri */}
         <div className="mb-12">
@@ -426,7 +592,7 @@ export default function Home() {
                   className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-purple-400 hover:text-purple-300"
                 >
                   <Award className="w-4 h-4" />
-                  <span>Rozet Sayfasına Git</span>
+                  <span>"Etkinliğe Katıl / Rozet Al"</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>
