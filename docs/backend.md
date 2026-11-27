@@ -172,3 +172,32 @@ a later-visible finalized success; it will never create a replacement transactio
 for an ambiguous result. Do not manually clear a signature to “unstick” a claim.
 Legacy attendance with an existing mint status/signature/asset but no job is
 blocked from a second mint and requires verified migration/reconciliation.
+
+
+## Multiple club administrators
+
+Apply `supabase/migrations/20261127214121_club_admin_memberships.sql` after the
+initial backend migration. It preserves `clubs.admin_id` as the club owner,
+backfills owners into `club_admins`, and allows any explicitly assigned management
+team member to create/delete events, assign badges, and access QR tokens for that
+club. A global admin without club membership cannot manage the club.
+
+- `GET /api/clubs` returns all clubs managed by the current administrator, including
+  membership-based access. Use this source for frontend authorization hints.
+- `GET /api/events?managed=true` (admin) returns only events in the user's clubs.
+  The unfiltered public event listing remains available for students.
+- `GET /api/clubs/admins?club_id=UUID` lists the team for club administrators.
+- `POST /api/clubs/admins` with `{ club_id, wallet_address }` adds a registered
+  user; **only the club owner** may do this. A student becomes an application admin
+  in the same transaction. Sponsor accounts are rejected rather than silently
+  changing their role.
+- `DELETE /api/clubs/admins` with the same JSON body removes a team member;
+  only the owner can remove members, and the owner cannot remove themselves.
+  Other club memberships remain intact. The user's global admin role is retained,
+  but it does not grant access to the removed club.
+
+Do not gate QR access by comparing `club.admin_id` with the current user in the
+frontend: that field identifies the owner, not the whole management team. Use the
+managed clubs endpoint; the server enforces membership on every action. Refresh
+`/api/auth/me` after granting a role. Only explicitly selected wallets should be
+added; never add all globally registered admins to every club automatically.

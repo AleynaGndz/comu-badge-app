@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 
 const migration = await fs.readFile(new URL('../supabase/migrations/20261127200639_backend_completion.sql', import.meta.url), 'utf8');
+const membershipsMigration = await fs.readFile(new URL('../supabase/migrations/20261127214121_club_admin_memberships.sql', import.meta.url), 'utf8');
 const ids = {
   student: '00000000-0000-4000-8000-000000000001',
   student2: '00000000-0000-4000-8000-000000000002',
@@ -18,6 +19,7 @@ async function setup() {
   const db = new PGlite();
   await db.exec('create role anon; create role authenticated; create role service_role bypassrls; grant usage on schema public to service_role;');
   await db.exec(migration);
+  await db.exec(membershipsMigration);
   for (const role of ['student', 'student2', 'admin', 'sponsor', 'otherSponsor']) {
     await db.query('insert into users(id, wallet_address, role) values ($1,$2,$3)', [ids[role], role, role === 'student2' ? 'student' : role === 'otherSponsor' ? 'sponsor' : role]);
   }
@@ -153,5 +155,51 @@ test('migration upgrades existing tables without deleting rows or rejecting lega
     assert.equal((await db.query('select mint_status from attendance')).rows[0].mint_status, 'success');
     await db.exec("update attendance set mint_status='minted'");
     assert.equal((await db.query('select count(*)::int as count from users')).rows[0].count, 1);
+  } finally { await db.close(); }
+});
+
+
+test('club team administrators share event permissions without granting unrelated admins access', async () => {
+  const db = await setup();
+  try {
+    const can = async user => (await db.query('select can_manage_club($1,$2) as allowed', [user, ids.club])).rows[0].allowed;
+    assert.equal(await can(ids.admin), true); // Original owner works even for new clubs.
+    assert.equal(await can(ids.student), false);
+    await db.query("update users set role='admin' where id=$1", [ids.student2]);
+    assert.equal(await can(ids.student2), false); // Global admin alone is not sufficient.
+    await rejectsCode(db.query('select set_club_admin($1,$2,$3,true)', [ids.student2, ids.club, ids.student2]), 'PT403');
+    await db.query('select set_club_admin($1,$2,$3,true)', [ids.admin, ids.club, ids.student]);
+    assert.equal(await can(ids.student), true);
+    assert.equal((await db.query('select role from users where id=$1', [ids.student])).rows[0].role, 'admin');
+    assert.equal((await db.query('select * from managed_clubs($1)', [ids.student])).rows.length, 1);
+    await db.query("select assign_event_badge($1,$2,'android')", [ids.student, ids.event]);
+    const created = (await db.query(`select create_club_event($1,$2,'Team Event','',now()+interval '1 day','token','dev3pack') as event`, [ids.student, ids.club])).rows[0].event;
+    await rejectsCode(db.query('select delete_club_event($1,$2)', [ids.student2, created.id]), 'PT403');
+    await db.query('select delete_club_event($1,$2)', [ids.student, created.id]);
+    await rejectsCode(db.query('select delete_club_event($1,$2)', [ids.student, ids.event]), 'PT409');
+    await rejectsCode(db.query('select set_club_admin($1,$2,$3,false)', [ids.admin, ids.club, ids.admin]), 'PT409');
+    await rejectsCode(db.query('select set_club_admin($1,$2,$3,true)', [ids.student, ids.club, ids.student2]), 'PT403');
+    await db.query('select set_club_admin($1,$2,$3,false)', [ids.admin, ids.club, ids.student]);
+    assert.equal(await can(ids.student), false);
+    assert.equal(await can(ids.admin), true);
+    await rejectsCode(db.query("select assign_event_badge($1,$2,'android')", [ids.student, ids.event]), 'PT403');
+    await rejectsCode(db.query(`select create_club_event($1,$2,'Forbidden','',now()+interval '1 day','token',null)`, [ids.student, ids.club]), 'PT403');
+    await db.exec('set role anon');
+    await rejectsCode(db.query('select * from club_admins'), '42501');
+    await rejectsCode(db.query('select can_manage_club($1,$2)', [ids.student, ids.club]), '42501');
+    await rejectsCode(db.query('select set_club_admin($1,$2,$3,true)', [ids.admin, ids.club, ids.student]), '42501');
+  } finally { await db.close(); }
+});
+
+test('membership migration backfills owners and keeps existing club ownership', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec('create role anon; create role authenticated; create role service_role bypassrls;');
+    await db.exec(migration);
+    await db.query("insert into users(id,wallet_address,role) values($1,'owner','admin')", [ids.admin]);
+    await db.query("insert into clubs(id,name,admin_id) values($1,'Existing Club',$2)", [ids.club, ids.admin]);
+    await db.exec(membershipsMigration);
+    assert.equal((await db.query('select user_id from club_admins')).rows[0].user_id, ids.admin);
+    assert.equal((await db.query('select admin_id from clubs')).rows[0].admin_id, ids.admin);
   } finally { await db.close(); }
 });
