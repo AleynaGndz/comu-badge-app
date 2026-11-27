@@ -4,7 +4,8 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { Html5Qrcode } from "html5-qrcode";
 import { startScannerSession } from "@/lib/qr-scanner";
 import {
@@ -35,14 +36,20 @@ interface EventDetail {
   event_date: string;
 }
 
+const REQUIRED_STAKE_SOL = 0.5;
+
 function ClaimContent() {
   const searchParams = useSearchParams();
   const eventId = searchParams.get("event") || "";
   const paramEventName = searchParams.get("name") || "ÇOMÜ Topluluk Etkinliği";
   const urlToken = searchParams.get("token") || "";
 
+  const { connection } = useConnection();
   const { publicKey } = useWallet();
   const walletAddress = publicKey ? publicKey.toBase58() : "";
+
+  const [solBalance, setSolBalance] = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   const [eventDetail, setEventDetail] = useState<EventDetail | null>(null);
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
@@ -78,13 +85,11 @@ function ClaimContent() {
     };
   }, []);
 
-  // Zaman kilidini canlı güncellemek için 15 saniyede bir saati tazele
   useEffect(() => {
     const interval = setInterval(() => setNowTs(Date.now()), 15000);
     return () => clearInterval(interval);
   }, []);
 
-  // Etkinlik tarih ve detayını yükle
   useEffect(() => {
     if (!eventId) return;
 
@@ -100,6 +105,39 @@ function ClaimContent() {
       })
       .catch(() => {});
   }, [eventId]);
+
+  // Cüzdanın Solana Devnet bakiyesini çek
+  useEffect(() => {
+    if (!publicKey) {
+      setSolBalance(null);
+      return;
+    }
+
+    let cancelled = false;
+    setBalanceLoading(true);
+
+    connection
+      .getBalance(publicKey)
+      .then((lamports) => {
+        if (!cancelled) {
+          setSolBalance(lamports / LAMPORTS_PER_SOL);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSolBalance(0);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBalanceLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey, connection]);
 
   // Cüzdan veya etkinlik değiştiğinde tüm claim/sonuç durumlarını sıfırla
   useEffect(() => {
@@ -127,7 +165,6 @@ function ClaimContent() {
     const storageKey = `comu_rsvp_${walletAddress}_${eventId}`;
     setIsRegistered(localStorage.getItem(storageKey) === "true");
 
-    // Aktif JWT oturumunu kontrol et
     fetch("/api/auth/me")
       .then((res) => res.json())
       .then((data) => {
@@ -140,7 +177,6 @@ function ClaimContent() {
       .catch(() => setIsAuthenticated(false));
   }, [walletAddress, eventId, urlToken]);
 
-  // Etkinlik zaman penceresi kontrolü: başlangıçtan 15 dk önce açılır, 2 saat sonra kapanır
   const eventStartMs = eventDetail?.event_date ? new Date(eventDetail.event_date).getTime() : null;
   const windowOpenMs = eventStartMs !== null ? eventStartMs - 15 * 60 * 1000 : null;
   const windowCloseMs = eventStartMs !== null ? eventStartMs + 2 * 60 * 60 * 1000 : null;
@@ -149,9 +185,20 @@ function ClaimContent() {
   const isAfterWindow = windowCloseMs !== null && nowTs > windowCloseMs;
   const isAttendanceOpen = !isBeforeWindow && !isAfterWindow;
 
-  // Etkinliğe 0.5 SOL taahhüt ile ön kayıt olma (prototip)
+  const hasEnoughSol = solBalance !== null && solBalance >= REQUIRED_STAKE_SOL;
+
+  // Etkinliğe 0.5 SOL taahhüt ile ön kayıt olma (bakiye kontrolü ile)
   const handleRegisterStake = async () => {
     if (!walletAddress || !eventId) return;
+
+    if (solBalance === null || solBalance < REQUIRED_STAKE_SOL) {
+      setErrorMsg(
+        `Yetersiz Bakiye: Etkinliğe kayıt olmak için cüzdanınızda en az ${REQUIRED_STAKE_SOL} SOL bulunmalıdır (Mevcut bakiye: ${(
+          solBalance ?? 0
+        ).toFixed(4)} SOL).`
+      );
+      return;
+    }
 
     setRegisterLoading(true);
     setErrorMsg(null);
@@ -167,7 +214,6 @@ function ClaimContent() {
     }
   };
 
-  // POST /api/claim (HTTP 202 polling + HTTP 200 confirmed + HTTP 409 retry_failed desteği)
   const submitClaim = useCallback(
     async (qrTokenToUse: string, retryFailed = false) => {
       if (!walletAddress || !eventId) return;
@@ -197,7 +243,6 @@ function ClaimContent() {
 
         if (!isMountedRef.current) return;
 
-        // HTTP 202: Blokzincir işlemi sürüyor, Retry-After (3 sn) bekleyip tekrar sor
         if (response.status === 202 || data.processing) {
           setProcessingChain(true);
           if (data.txSignature) {
@@ -213,7 +258,6 @@ function ClaimContent() {
           return;
         }
 
-        // HTTP 200: Kesinleşmiş cNFT mint başarısı
         if (response.ok && data.success) {
           setProcessingChain(false);
           setClaiming(false);
@@ -223,7 +267,6 @@ function ClaimContent() {
           return;
         }
 
-        // Hata veya HTTP 409 durumu
         setProcessingChain(false);
         setClaiming(false);
 
@@ -248,14 +291,20 @@ function ClaimContent() {
     [walletAddress, eventId]
   );
 
-  // Eğer URL'den doğrudan geçerli token ile gelindiyse ve oturum açıksa claim başlat
   useEffect(() => {
-    if (urlToken && walletAddress && isAuthenticated === true && !claimed && !claiming && !processingChain && !errorMsg) {
+    if (
+      urlToken &&
+      walletAddress &&
+      isAuthenticated === true &&
+      !claimed &&
+      !claiming &&
+      !processingChain &&
+      !errorMsg
+    ) {
       submitClaim(urlToken, false);
     }
   }, [urlToken, walletAddress, isAuthenticated, claimed, claiming, processingChain, errorMsg, submitClaim]);
 
-  // Satır içi QR Kamera Yönetimi (Strict Mode çift kamera korumalı)
   useEffect(() => {
     if (!showScanner) return;
 
@@ -302,9 +351,7 @@ function ClaimContent() {
               setScanError("Bu QR kod başka bir etkinliğe ait! Lütfen bu etkinliğin QR kodunu okutun.");
               return;
             }
-          } catch {
-            // Geçerli URL değilse aşağıdaki uyarıya düşer
-          }
+          } catch {}
 
           setScanError("Geçersiz QR kod! Lütfen etkinlik alanındaki ÇOMÜ Badge QR kodunu okutun.");
         },
@@ -365,9 +412,24 @@ function ClaimContent() {
 
         {/* Stake-to-Attend Bilgi Kutusu */}
         <div className="mb-6 p-4 bg-slate-950/70 border border-slate-800 rounded-xl text-left space-y-2 text-xs text-slate-300">
-          <div className="flex items-center gap-2 text-purple-300 font-semibold">
-            <Coins className="w-4 h-4 shrink-0" />
-            <span>0.5 SOL Katılım Taahhüdü</span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-purple-300 font-semibold">
+              <Coins className="w-4 h-4 shrink-0" />
+              <span>0.5 SOL Katılım Taahhüdü</span>
+            </div>
+            {publicKey && (
+              <span
+                className={`text-[11px] font-mono px-2 py-0.5 rounded ${
+                  hasEnoughSol
+                    ? "bg-emerald-500/15 text-emerald-300"
+                    : "bg-red-500/15 text-red-300"
+                }`}
+              >
+                {balanceLoading
+                  ? "Bakiye ölçülüyor..."
+                  : `Bakiye: ${(solBalance ?? 0).toFixed(3)} SOL`}
+              </span>
+            )}
           </div>
           <p className="text-slate-400">
             Etkinliğe katılıp QR okuttuğunda <strong>0.5 SOL</strong> cüzdanına iade edilir ve cNFT rozetini kazanırsın.
@@ -414,7 +476,6 @@ function ClaimContent() {
               )}
             </div>
 
-            {/* Jüri UX Butonları */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Link
                 href="/#koleksiyonum"
@@ -443,7 +504,6 @@ function ClaimContent() {
               <WalletMultiButton />
             </div>
 
-            {/* HTTP 202 Blokzincir Onay Bekleme Ekranı */}
             {processingChain && (
               <div className="p-4 bg-purple-950/50 border border-purple-500/40 rounded-xl space-y-2 text-xs text-purple-200">
                 <Loader2 className="w-6 h-6 animate-spin text-purple-400 mx-auto" />
@@ -474,23 +534,34 @@ function ClaimContent() {
             )}
 
             {!isRegistered ? (
-              <button
-                onClick={handleRegisterStake}
-                disabled={registerLoading || isAfterWindow}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
-              >
-                {registerLoading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Kayıt Yapılıyor...</span>
-                  </>
-                ) : (
-                  <>
-                    <Coins className="w-5 h-5" />
-                    <span>Katılacağım (0.5 SOL Taahhüt Et)</span>
-                  </>
+              <div className="space-y-2">
+                {!balanceLoading && !hasEnoughSol && (
+                  <div className="p-3 bg-amber-950/50 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>
+                      Kayıt için cüzdanınızda en az <strong>0.5 SOL</strong> (Devnet) bulunmalıdır.
+                    </span>
+                  </div>
                 )}
-              </button>
+
+                <button
+                  onClick={handleRegisterStake}
+                  disabled={registerLoading || balanceLoading || !hasEnoughSol || isAfterWindow}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {registerLoading || balanceLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>{balanceLoading ? "Bakiye Kontrol Ediliyor..." : "Kayıt Yapılıyor..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Coins className="w-5 h-5" />
+                      <span>Katılacağım (0.5 SOL Taahhüt Et)</span>
+                    </>
+                  )}
+                </button>
+              </div>
             ) : (
               <div className="space-y-4">
                 <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-center justify-center gap-2">
@@ -498,7 +569,6 @@ function ClaimContent() {
                   <span>Etkinliğe kayıtlısın (0.5 SOL taahhüt edildi)</span>
                 </div>
 
-                {/* Etkinlik Zaman Kilidi Kontrolü */}
                 {isBeforeWindow && windowOpenMs !== null ? (
                   <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-300 space-y-1.5">
                     <div className="flex items-center justify-center gap-1.5 text-amber-400 font-semibold">
