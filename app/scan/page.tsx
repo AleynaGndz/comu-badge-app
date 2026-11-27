@@ -4,75 +4,118 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, ArrowLeft, AlertCircle } from "lucide-react";
+import { Camera, ArrowLeft, AlertCircle, CheckCircle2 } from "lucide-react";
 
 export default function ScanPage() {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [matchedUrl, setMatchedUrl] = useState<string | null>(null);
+  const isRedirectingRef = useRef(false);
 
   useEffect(() => {
-    const html5QrCode = new Html5Qrcode("qr-reader");
-    scannerRef.current = html5QrCode;
+    const scannerId = "comu-qr-reader";
+    const html5QrCode = new Html5Qrcode(scannerId);
+    let isMounted = true;
 
     html5QrCode
       .start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
-          html5QrCode.stop().catch(() => {});
+          if (isRedirectingRef.current) return;
+
           try {
-            const url = new URL(decodedText);
-            if (url.pathname === "/claim") {
-              router.push(`${url.pathname}${url.search}`);
+            const parsed = new URL(decodedText, window.location.origin);
+            const isSameOrigin = parsed.origin === window.location.origin;
+            const isClaimPath = parsed.pathname === "/claim";
+            const eventParam = parsed.searchParams.get("event");
+            const tokenParam = parsed.searchParams.get("token");
+
+            if (isSameOrigin && isClaimPath && eventParam && tokenParam) {
+              isRedirectingRef.current = true;
+              setScanError(null);
+              const targetPath = `${parsed.pathname}${parsed.search}`;
+              setMatchedUrl(targetPath);
+
+              html5QrCode
+                .stop()
+                .catch(() => {})
+                .finally(() => {
+                  router.push(targetPath);
+                });
               return;
             }
           } catch {
-            // Tam URL değilse doğrudan yönlendir
+            // Geçerli bir URL değilse aşağıdaki uyarıya düşer
           }
-          window.location.href = decodedText;
+
+          // Harici site veya geçersiz QR kod: yönlendirme yapma, kamerayı açık tut
+          setScanError("Geçersiz QR kod! Lütfen yalnızca ÇOMÜ Badge etkinlik QR kodunu okutun.");
         },
         () => {
           // Karede QR bulunamadığında sessizce devam et
         }
       )
-      .catch(() => {
-        setError("Kamera başlatılamadı. Tarayıcıdan kamera izni verdiğinden emin ol.");
+      .catch((err) => {
+        if (isMounted) {
+          console.error("Kamera başlatılamadı:", err);
+          setCameraError(
+            "Kameraya erişilemedi. Tarayıcı izinlerini kontrol edin veya masaüstündeyseniz etkinlik kartından doğrudan rozet sayfasına gidin."
+          );
+        }
       });
 
     return () => {
-      if (scannerRef.current?.isScanning) {
-        scannerRef.current.stop().catch(() => {});
+      isMounted = false;
+      if (html5QrCode.isScanning) {
+        html5QrCode.stop().catch(() => {});
       }
     };
   }, [router]);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">
-        <div className="flex justify-start mb-4">
-          <Link href="/" className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Ana Sayfa</span>
+    <main className="min-h-screen bg-slate-950 text-white p-6 flex flex-col items-center justify-center">
+      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+        <div className="mb-5">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-400 transition"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Ana Sayfaya Dön</span>
           </Link>
         </div>
 
-        <div className="w-12 h-12 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-3">
-          <Camera className="w-6 h-6" />
+        <div className="flex items-center gap-2 text-purple-400 font-bold text-lg mb-2">
+          <Camera className="w-5 h-5" />
+          <h1>Etkinlik QR Kodunu Okut</h1>
         </div>
-        <h1 className="text-xl font-bold mb-1">Etkinlik QR Kodunu Okut</h1>
-        <p className="text-slate-400 text-xs mb-6">
-          Kameranızı etkinlik alanındaki QR koda tutun, rozet ekranına otomatik yönlendirileceksiniz.
+        <p className="text-xs text-slate-400 mb-5">
+          Etkinlik alanındaki ekranda yer alan ÇOMÜ Badge QR kodunu kameraya tutun.
         </p>
 
-        {error ? (
-          <div className="p-4 bg-red-950/50 border border-red-500/40 rounded-xl text-red-400 text-xs flex items-center gap-2 text-left">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <span>{error}</span>
+        {cameraError ? (
+          <div className="p-4 bg-red-950/50 border border-red-500/40 rounded-xl text-xs text-red-300">
+            {cameraError}
           </div>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-purple-500/40 bg-black">
-            <div id="qr-reader" className="w-full" />
+          <div className="overflow-hidden rounded-xl border border-slate-700 bg-black">
+            <div id="comu-qr-reader" className="w-full" />
+          </div>
+        )}
+
+        {scanError && (
+          <div className="mt-4 p-3 bg-amber-950/60 border border-amber-500/40 rounded-xl flex items-start gap-2 text-xs text-amber-200">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>{scanError}</span>
+          </div>
+        )}
+
+        {matchedUrl && (
+          <div className="mt-4 p-3 bg-green-950/60 border border-green-500/40 rounded-xl flex items-center gap-2 text-xs text-green-300">
+            <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
+            <span>Etkinlik QR doğrulandı, rozet ekranına yönlendiriliyorsunuz...</span>
           </div>
         )}
       </div>

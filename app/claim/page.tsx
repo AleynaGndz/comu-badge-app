@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Award, CheckCircle, Loader2, ExternalLink, AlertCircle, ArrowLeft } from "lucide-react";
+import { Award, CheckCircle2, Loader2, ArrowLeft, ExternalLink, AlertCircle } from "lucide-react";
 
 const WalletMultiButton = dynamic(
   async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
@@ -14,8 +14,9 @@ const WalletMultiButton = dynamic(
 
 function ClaimContent() {
   const searchParams = useSearchParams();
-  const eventId = searchParams.get("event") || "genel-etkinlik";
-  const eventName = searchParams.get("name") || "ÇOMÜ Teknoloji Etkinliği";
+  const eventId = searchParams.get("event") || "";
+  const eventName = searchParams.get("name") || "ÇOMÜ Topluluk Etkinliği";
+  const qrToken = searchParams.get("token") || "";
 
   const { publicKey } = useWallet();
   const [loading, setLoading] = useState(false);
@@ -25,6 +26,11 @@ function ClaimContent() {
 
   const handleClaimBadge = async () => {
     if (!publicKey) return;
+    if (!eventId || !qrToken) {
+      setErrorMsg("Geçersiz veya eksik QR token bilgisi. Lütfen etkinlik QR kodunu tekrar okutun.");
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
 
@@ -34,9 +40,15 @@ function ClaimContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           walletAddress: publicKey.toBase58(),
-          eventId: eventId,
+          eventId,
+          qrToken,
         }),
       });
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("cNFT basma servisi (/api/claim) henüz backend tarafında aktif edilmedi.");
+      }
 
       const data = await response.json();
 
@@ -55,10 +67,13 @@ function ClaimContent() {
   };
 
   return (
-    <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
-      <div className="flex justify-start mb-4">
-        <Link href="/" className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
-          <ArrowLeft className="w-3.5 h-3.5" />
+    <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center shadow-xl">
+      <div className="text-left mb-6">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-400 transition"
+        >
+          <ArrowLeft className="w-4 h-4" />
           <span>Ana Sayfa</span>
         </Link>
       </div>
@@ -75,50 +90,64 @@ function ClaimContent() {
         Katılımını Solana blokzincirine kaydet ve sponsor indirimlerinin kilidini aç.
       </p>
 
-      <div className="flex justify-center mb-6">
-        <WalletMultiButton />
-      </div>
-
-      {errorMsg && (
-        <div className="mb-4 p-3 bg-red-950/50 border border-red-500/40 rounded-xl text-red-400 text-xs flex items-center gap-2 text-left">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{errorMsg}</span>
+      {!publicKey ? (
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-xs text-slate-400">Devam etmek için Solana cüzdanını bağla:</p>
+          <WalletMultiButton />
         </div>
-      )}
-
-      {publicKey && !claimed && (
-        <button
-          onClick={handleClaimBadge}
-          disabled={loading}
-          className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition cursor-pointer"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>cNFT Cüzdana Basılıyor...</span>
-            </>
-          ) : (
-            <span>Rozetimi Ücretsiz Al</span>
-          )}
-        </button>
-      )}
-
-      {claimed && (
-        <div className="p-4 bg-green-950/50 border border-green-500/40 rounded-xl text-green-400 space-y-2">
-          <CheckCircle className="w-6 h-6 mx-auto" />
-          <p className="font-semibold text-sm">cNFT Rozet Cüzdanına Gönderildi!</p>
-          <p className="text-xs text-slate-400">Etkinlik Kodu: {eventId}</p>
+      ) : claimed ? (
+        <div className="p-4 bg-green-950/60 border border-green-500/40 rounded-xl space-y-3">
+          <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto" />
+          <h2 className="font-bold text-green-400">Rozet Cüzdanına Gönderildi!</h2>
+          <p className="text-xs text-slate-300">
+            Solana Devnet üzerinde cNFT rozetin başarıyla oluşturuldu.
+          </p>
           {txSignature && (
             <a
               href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
               target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 underline pt-1"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-purple-300 hover:text-purple-200 underline"
             >
-              <span>Solana Explorer&apos;da İncele</span>
-              <ExternalLink className="w-3 h-3" />
+              <span>Solana Explorer&apos;da Görüntüle</span>
+              <ExternalLink className="w-3.5 h-3.5" />
             </a>
           )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex justify-center">
+            <WalletMultiButton />
+          </div>
+
+          {!qrToken && (
+            <div className="p-3 bg-amber-950/50 border border-amber-500/40 rounded-lg text-xs text-amber-300 flex items-center justify-center gap-1.5">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>QR token eksik — lütfen yönetim panelindeki QR kodu okutun.</span>
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="p-3 bg-red-950/50 border border-red-500/40 rounded-lg text-xs text-red-300 flex items-center justify-center gap-1.5">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          <button
+            onClick={handleClaimBadge}
+            disabled={loading}
+            className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>cNFT Basılıyor...</span>
+              </>
+            ) : (
+              <span>Rozetimi Ücretsiz Al</span>
+            )}
+          </button>
         </div>
       )}
     </div>
@@ -127,8 +156,8 @@ function ClaimContent() {
 
 export default function ClaimPage() {
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-      <Suspense fallback={<p className="text-slate-400">Yükleniyor...</p>}>
+    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+      <Suspense fallback={<div className="text-slate-400 text-sm">Yükleniyor...</div>}>
         <ClaimContent />
       </Suspense>
     </main>
