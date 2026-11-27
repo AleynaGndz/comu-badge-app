@@ -1,28 +1,73 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { QrCode, CheckCircle2, ShieldCheck } from "lucide-react";
+import { QrCode, CheckCircle2, ShieldCheck, Calendar } from "lucide-react";
+
+interface EventItem {
+  id: string;
+  title: string;
+  description: string;
+  event_date: string;
+}
 
 export default function AdminPage() {
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState("dev3pack-2026");
   const [eventName, setEventName] = useState("Dev3pack Çanakkale Build Station");
-  const [eventId, setEventId] = useState("dev3pack-2026");
+  const [origin, setOrigin] = useState("");
   const [studentAddress, setStudentAddress] = useState("");
   const [verificationResult, setVerificationResult] = useState<null | {
     eligible: boolean;
     badgeCount: number;
   }>(null);
 
-  // Öğrencinin telefondan okutacağı rozet alma linki
-  const claimUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/claim?event=${encodeURIComponent(eventId)}&name=${encodeURIComponent(eventName)}`
-      : "";
+  useEffect(() => {
+    setOrigin(window.location.origin);
 
-  const handleVerifyStudent = (e: React.FormEvent) => {
+    // Backend API'den gerçek etkinlikleri çek
+    fetch("/api/events")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.events) && data.events.length > 0) {
+          setEvents(data.events);
+          setSelectedEventId(data.events[0].id);
+          setEventName(data.events[0].title);
+        }
+      })
+      .catch((err) => console.error("Etkinlikler yüklenemedi:", err));
+  }, []);
+
+  const handleEventSelect = (id: string) => {
+    setSelectedEventId(id);
+    const found = events.find((ev) => String(ev.id) === id);
+    if (found) {
+      setEventName(found.title);
+    }
+  };
+
+  const claimUrl = origin
+    ? `${origin}/claim?event=${encodeURIComponent(selectedEventId)}&name=${encodeURIComponent(eventName)}`
+    : "";
+
+  const handleVerifyStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentAddress.trim()) return;
-    // Kişi 1 DAS API'yi bağlayana kadar simülasyon sonucu
+
+    try {
+      const res = await fetch(`/api/badges?wallet=${encodeURIComponent(studentAddress.trim())}`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.badges)) {
+        setVerificationResult({
+          eligible: data.badges.length > 0,
+          badgeCount: data.badges.length,
+        });
+        return;
+      }
+    } catch {
+      // Backend /api/badges henüz eklenmediyse demo verisi göster
+    }
+
     setVerificationResult({
       eligible: true,
       badgeCount: 3,
@@ -36,7 +81,7 @@ export default function AdminPage() {
           Topluluk & Sponsor Yönetim Paneli
         </h1>
         <p className="text-slate-400 mb-8 text-sm">
-          Etkinlik katılım QR kodu oluşturun ve sponsor indirimleri için öğrenci cüzdanlarını doğrulayın.
+          Veritabanındaki etkinlikler için katılım QR kodu oluşturun ve sponsor indirimlerini doğrulayın.
         </p>
 
         <div className="grid md:grid-cols-2 gap-8">
@@ -48,6 +93,26 @@ export default function AdminPage() {
             </div>
 
             <div className="space-y-4 mb-6">
+              {events.length > 0 && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Kayıtlı Etkinlik Seç (Supabase)</span>
+                  </label>
+                  <select
+                    value={selectedEventId}
+                    onChange={(e) => handleEventSelect(e.target.value)}
+                    className="w-full bg-slate-950 border border-purple-500/50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                  >
+                    {events.map((ev) => (
+                      <option key={ev.id} value={ev.id}>
+                        {ev.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs text-slate-400 mb-1">Etkinlik Adı</label>
                 <input
@@ -61,18 +126,24 @@ export default function AdminPage() {
                 <label className="block text-xs text-slate-400 mb-1">Etkinlik Kodu (ID)</label>
                 <input
                   type="text"
-                  value={eventId}
-                  onChange={(e) => setEventId(e.target.value)}
+                  value={selectedEventId}
+                  onChange={(e) => setSelectedEventId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
                 />
               </div>
             </div>
 
-            <div className="flex flex-col items-center bg-white p-6 rounded-xl">
-              <QRCodeSVG value={claimUrl} size={180} />
-              <p className="text-slate-900 font-semibold text-xs mt-3 text-center">
-                {eventName}
-              </p>
+            <div className="flex flex-col items-center bg-white p-6 rounded-xl min-h-[240px] justify-center">
+              {claimUrl ? (
+                <>
+                  <QRCodeSVG value={claimUrl} size={180} />
+                  <p className="text-slate-900 font-semibold text-xs mt-3 text-center">
+                    {eventName}
+                  </p>
+                </>
+              ) : (
+                <p className="text-slate-400 text-xs">QR Kod hazırlanıyor...</p>
+              )}
             </div>
           </div>
 

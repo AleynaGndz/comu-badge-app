@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { SignJWT } from "jose";
+import { getSession } from "@/lib/auth";
 
 export async function POST(request: Request) {
     try {
@@ -147,6 +148,55 @@ export async function POST(request: Request) {
         return NextResponse.json(
             { success: false, message: "Login failed" },
             { status: 500 }
+        );
+    }
+}
+export async function PATCH(request: Request) {
+    try {
+        const session = await getSession();
+
+        if (!session) {
+            return NextResponse.json(
+                { success: false, message: "Oturum doğrulanmadı" },
+                { status: 401 }
+            );
+        }
+
+        const { name } = await request.json();
+
+        if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 50) {
+            return NextResponse.json(
+                { success: false, message: "İsim 2 ile 50 karakter arasında olmalıdır" },
+                { status: 400 }
+            );
+        }
+
+        const { data: updatedUser, error } = await supabase
+            .from("users")
+            .update({ name: name.trim() })
+            .eq("id", session.userId)
+            .eq("wallet_address", session.walletAddress)
+            .select("id, wallet_address, name, role")
+            .single();
+
+        if (error) {
+            console.error(error);
+            return NextResponse.json(
+                { success: false, message: "İsim güncellenemedi" },
+                { status: 500 }
+            );
+        }
+
+        return NextResponse.json({
+            success: true,
+            message: "Profil adı güncellendi",
+            user: updatedUser,
+        });
+    } catch (error) {
+        console.error(error);
+        return NextResponse.json(
+            { success: false, message: "Geçersiz istek" },
+            { status: 400 }
         );
     }
 }
