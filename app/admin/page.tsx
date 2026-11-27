@@ -1,28 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { QrCode, CheckCircle2, ShieldCheck } from "lucide-react";
 
 export default function AdminPage() {
   const [eventName, setEventName] = useState("Dev3pack Çanakkale Build Station");
   const [eventId, setEventId] = useState("dev3pack-2026");
+  const [origin, setOrigin] = useState("");
   const [studentAddress, setStudentAddress] = useState("");
   const [verificationResult, setVerificationResult] = useState<null | {
     eligible: boolean;
     badgeCount: number;
   }>(null);
 
-  // Öğrencinin telefondan okutacağı rozet alma linki
-  const claimUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/claim?event=${encodeURIComponent(eventId)}&name=${encodeURIComponent(eventName)}`
-      : "";
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const claimUrl = origin
+    ? `${origin}/claim?event=${encodeURIComponent(eventId)}&name=${encodeURIComponent(eventName)}`
+    : "";
 
   const handleVerifyStudent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentAddress.trim()) return;
-    // Kişi 1 DAS API'yi bağlayana kadar simülasyon sonucu
     setVerificationResult({
       eligible: true,
       badgeCount: 3,
@@ -68,11 +70,17 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="flex flex-col items-center bg-white p-6 rounded-xl">
-              <QRCodeSVG value={claimUrl} size={180} />
-              <p className="text-slate-900 font-semibold text-xs mt-3 text-center">
-                {eventName}
-              </p>
+            <div className="flex flex-col items-center bg-white p-6 rounded-xl min-h-[240px] justify-center">
+              {claimUrl ? (
+                <>
+                  <QRCodeSVG value={claimUrl} size={180} />
+                  <p className="text-slate-900 font-semibold text-xs mt-3 text-center">
+                    {eventName}
+                  </p>
+                </>
+              ) : (
+                <p className="text-slate-400 text-xs">QR Kod hazırlanıyor...</p>
+              )}
             </div>
           </div>
 
