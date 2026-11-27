@@ -9,7 +9,6 @@ import {
   Award,
   ArrowRight,
   Sparkles,
-  Camera,
   ShieldCheck,
   Loader2,
   Pencil,
@@ -288,13 +287,6 @@ export default function Home() {
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold text-purple-400">ÇOMÜ Badge</h1>
-          <Link
-            href="/scan"
-            className="text-sm text-slate-300 hover:text-purple-400 flex items-center gap-1.5 transition"
-          >
-            <Camera className="w-4 h-4" />
-            <span>QR Okut</span>
-          </Link>
           <Link href="/admin" className="text-sm text-slate-400 hover:text-white transition">
             Yönetim & QR
           </Link>
@@ -600,7 +592,7 @@ export default function Home() {
                   className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-purple-400 hover:text-purple-300"
                 >
                   <Award className="w-4 h-4" />
-                  <span>Rozet Sayfasına Git</span>
+                  <span>"Etkinliğe Katıl / Rozet Al"</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>
