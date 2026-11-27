@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Calendar, Award, ArrowRight, Sparkles } from "lucide-react";
+import { Calendar, Award, ArrowRight, Sparkles, Camera } from "lucide-react";
+import badgesCatalog from "../badges.json";
 
 const WalletMultiButton = dynamic(
   async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
@@ -24,6 +25,42 @@ interface BadgeItem {
   image_url?: string;
   claimed_at?: string;
   tx_signature?: string;
+}
+
+const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
+  dev3pack: {
+    title: "Dev3pack Build Station",
+    desc: "Solana & Web3 Geliştirici Katılım Rozeti",
+  },
+  movie_night: {
+    title: "Kampüs Film Gecesi",
+    desc: "Topluluk Sosyal Etkinlik Rozeti",
+  },
+  android: {
+    title: "Android Geliştirme Atölyesi",
+    desc: "Mobil Teknoloji Eğitim Rozeti",
+  },
+};
+
+function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <div className="w-24 h-24 bg-purple-500/20 text-purple-400 rounded-xl flex items-center justify-center mb-3">
+        <Award className="w-10 h-10" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={`/api/badge-image?uri=${encodeURIComponent(uri)}`}
+      alt={alt}
+      onError={() => setFailed(true)}
+      className="w-28 h-28 object-contain rounded-xl mb-3 bg-slate-950 p-2"
+    />
+  );
 }
 
 export default function Home() {
@@ -55,16 +92,20 @@ export default function Home() {
           setMyBadges(data.badges);
         }
       })
-      .catch(() => {
-        // Endpoint henüz eklenmediyse sessizce geç
-      });
+      .catch(() => {});
   }, [publicKey]);
+
+  const catalogEntries = Object.entries(badgesCatalog);
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
-      <nav className="flex justify-between items-center max-w-4xl mx-auto pb-8 border-b border-slate-800">
+      <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold text-purple-400">ÇOMÜ Badge</h1>
+          <Link href="/scan" className="text-sm text-slate-300 hover:text-purple-400 flex items-center gap-1.5 transition">
+            <Camera className="w-4 h-4" />
+            <span>QR Okut</span>
+          </Link>
           <Link href="/admin" className="text-sm text-slate-400 hover:text-white transition">
             Yönetim & QR
           </Link>
@@ -105,11 +146,7 @@ export default function Home() {
                     className="bg-slate-900 border border-purple-500/30 rounded-xl p-4 flex flex-col items-center text-center"
                   >
                     {badge.image_url ? (
-                      <img
-                        src={badge.image_url}
-                        alt={badge.title}
-                        className="w-20 h-20 object-cover rounded-lg mb-3"
-                      />
+                      <IpfsBadgeImage uri={badge.image_url} alt={badge.title} />
                     ) : (
                       <div className="w-16 h-16 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mb-3">
                         <Award className="w-8 h-8" />
@@ -122,11 +159,38 @@ export default function Home() {
               </div>
             ) : (
               <div className="p-5 bg-slate-900/40 border border-dashed border-slate-800 rounded-xl text-center text-sm text-slate-400">
-                Henüz cüzdanında rozet görünmüyor. Aşağıdaki etkinliklerden birine katılıp ilk rozetini alabilirsin!
+                Henüz cüzdanında rozet görünmüyor. Etkinlik alanındaki QR kodu okutarak ilk rozetini alabilirsin!
               </div>
             )}
           </div>
         )}
+
+        {/* Tasarım Kataloğu: Kazanılabilir Kampüs Rozetleri */}
+        <div className="mb-12">
+          <div className="flex items-center gap-2 mb-4">
+            <Award className="w-5 h-5 text-purple-400" />
+            <h2 className="text-lg font-bold">Kazanılabilir Kampüs Rozetleri (IPFS)</h2>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {catalogEntries.map(([key, imageUrl]) => {
+              const info = BADGE_LABELS[key] || {
+                title: key,
+                desc: "ÇOMÜ Topluluk Katılım Rozeti",
+              };
+              return (
+                <div
+                  key={key}
+                  className="bg-slate-900 border border-slate-800 hover:border-purple-500/40 rounded-xl p-4 flex flex-col items-center text-center transition"
+                >
+                  <IpfsBadgeImage uri={imageUrl} alt={info.title} />
+                  <h3 className="font-semibold text-sm text-white">{info.title}</h3>
+                  <p className="text-xs text-slate-400 mt-1">{info.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Etkinlikler Listesi */}
         <div className="flex items-center gap-2 mb-6">
