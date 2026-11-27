@@ -1,5 +1,5 @@
 import "server-only";
-import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
+import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { ApiError } from "@/lib/api";
 
@@ -29,6 +29,10 @@ export async function prepareSolTransfer(connection: Connection, from: string, t
   if (!Number.isSafeInteger(lamports) || lamports <= 0) throw new ApiError("Invalid transfer amount", 500);
   const latest = await connection.getLatestBlockhash("finalized");
   const transaction = new Transaction({ feePayer: new PublicKey(from), ...latest }).add(
+    // Explicit fees keep Phantom from adding instructions after proposal storage.
+    // 100k CU covers a native transfer plus memo; priority fee is 100 lamports.
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
     SystemProgram.transfer({ fromPubkey: new PublicKey(from), toPubkey: new PublicKey(to), lamports }),
     new TransactionInstruction({ programId: MEMO, keys: [], data: Buffer.from(reference, "utf8") }),
   );
@@ -43,4 +47,9 @@ export function decodeSignedPayment(encoded: unknown) {
       message: transaction.serializeMessage().toString("base64"),
       signed: transaction.serialize().toString("base64") };
   } catch { throw new ApiError("Invalid transaction signature", 400); }
+}
+
+export function proposalHasExplicitFees(encoded: string) {
+  const transaction = Transaction.from(Buffer.from(encoded, "base64"));
+  return transaction.instructions.some(ix => ix.programId.equals(ComputeBudgetProgram.programId));
 }

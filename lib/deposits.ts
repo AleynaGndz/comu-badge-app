@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import bs58 from "bs58";
 import { ApiError } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import { decodeSignedPayment, depositSigner, devnetConnection, prepareSolTransfer } from "@/lib/deposit-chain";
+import { decodeSignedPayment, depositSigner, devnetConnection, prepareSolTransfer, proposalHasExplicitFees } from "@/lib/deposit-chain";
 
 export interface Deposit {
   id: string; user_id: string; event_id: string; wallet_address: string; treasury_address: string;
@@ -40,7 +40,7 @@ export async function prepareDeposit(userId: string, eventId: string) {
     .select("unsigned_transaction,last_valid_block_height").eq("deposit_id", deposit.id)
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (latestError) throw latestError;
-  if (latest && await connection.getBlockHeight("finalized") < Number(latest.last_valid_block_height) - 10) {
+  if (latest && proposalHasExplicitFees(latest.unsigned_transaction) && await connection.getBlockHeight("finalized") < Number(latest.last_valid_block_height) - 10) {
     return { deposit: depositView(deposit), transaction: latest.unsigned_transaction };
   }
   const prepared = await prepareSolTransfer(connection, deposit.wallet_address, deposit.treasury_address,

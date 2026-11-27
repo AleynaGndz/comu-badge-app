@@ -255,3 +255,9 @@ This follows Solana's [transaction retry guidance](https://solana.com/developers
 Only sanitized job data is returned; RPC credentials and signed transaction bytes
 remain service-only behind RLS. Live wallet signing/chain transfers are a separate
 verification step from the automated PostgreSQL, signature and payout tests.
+
+Payment proposals include an explicit compute limit and priority fee so Phantom
+keeps the stored transaction message unchanged when signing (see [Phantom priority
+fees](https://github.com/phantom/docs/blob/master/development-powertools/solana-priority-fees.md)).
+Older unsigned proposals without those instructions are refreshed before signing;
+exact message matching remains enforced by the backend.
