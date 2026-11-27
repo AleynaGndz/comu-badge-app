@@ -11,6 +11,7 @@ import {
   PlusCircle,
   ArrowLeft,
   Loader2,
+  Trash2,
 } from "lucide-react";
 
 interface EventItem {
@@ -18,20 +19,24 @@ interface EventItem {
   title: string;
   description: string;
   event_date: string;
+  qr_token?: string;
 }
 
 export default function AdminPage() {
   const [events, setEvents] = useState<EventItem[]>([]);
-  const [selectedEventId, setSelectedEventId] = useState("dev3pack-2026");
-  const [eventName, setEventName] = useState("Dev3pack Çanakkale Build Station");
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [eventName, setEventName] = useState("");
   const [origin, setOrigin] = useState("");
+  const [claimUrl, setClaimUrl] = useState("");
+  const [qrStatusNote, setQrStatusNote] = useState<string | null>(null);
+  const [deletingEvent, setDeletingEvent] = useState(false);
+
   const [studentAddress, setStudentAddress] = useState("");
   const [verificationResult, setVerificationResult] = useState<null | {
     eligible: boolean;
     badgeCount: number;
   }>(null);
 
-  // Yeni etkinlik formu state'leri
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newDate, setNewDate] = useState("");
@@ -56,6 +61,48 @@ export default function AdminPage() {
       .catch((err) => console.error("Etkinlikler yüklenemedi:", err));
   }, []);
 
+  useEffect(() => {
+    if (!origin || !selectedEventId) {
+      setClaimUrl("");
+      return;
+    }
+
+    const selectedEv = events.find((ev) => String(ev.id) === String(selectedEventId));
+
+    fetch(`/api/events/qr?event=${encodeURIComponent(selectedEventId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.claim_path) {
+          setClaimUrl(`${origin}${data.claim_path}`);
+          setQrStatusNote("Admin oturumu doğrulandı — Güvenli QR token aktif");
+        } else {
+          const params = new URLSearchParams({
+            event: selectedEventId,
+            name: selectedEv?.title || eventName,
+          });
+          if (selectedEv?.qr_token) {
+            params.set("token", selectedEv.qr_token);
+          }
+          setClaimUrl(`${origin}/claim?${params.toString()}`);
+          setQrStatusNote(
+            data.message === "Unauthorized" || data.message === "Admin access required"
+              ? "Not: Admin rolü doğrulaması bekleniyor (Tokenlı yedek QR aktif)"
+              : null
+          );
+        }
+      })
+      .catch(() => {
+        const params = new URLSearchParams({
+          event: selectedEventId,
+          name: selectedEv?.title || eventName,
+        });
+        if (selectedEv?.qr_token) {
+          params.set("token", selectedEv.qr_token);
+        }
+        setClaimUrl(`${origin}/claim?${params.toString()}`);
+      });
+  }, [origin, selectedEventId, events, eventName]);
+
   const handleEventSelect = (id: string) => {
     setSelectedEventId(id);
     const found = events.find((ev) => String(ev.id) === id);
@@ -64,9 +111,43 @@ export default function AdminPage() {
     }
   };
 
-  const claimUrl = origin
-    ? `${origin}/claim?event=${encodeURIComponent(selectedEventId)}&name=${encodeURIComponent(eventName)}`
-    : "";
+  const handleDeleteSelectedEvent = async () => {
+    if (!selectedEventId) return;
+    setDeletingEvent(true);
+    setCreateMessage(null);
+
+    try {
+      const res = await fetch(`/api/events?id=${encodeURIComponent(selectedEventId)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Etkinlik silinemedi.");
+      }
+
+      const remaining = events.filter((ev) => String(ev.id) !== String(selectedEventId));
+      setEvents(remaining);
+
+      if (remaining.length > 0) {
+        setSelectedEventId(remaining[0].id);
+        setEventName(remaining[0].title);
+      } else {
+        setSelectedEventId("");
+        setEventName("");
+      }
+
+      setCreateMessage({
+        type: "success",
+        text: "Seçili etkinlik veritabanından silindi.",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Silme işlemi başarısız.";
+      setCreateMessage({ type: "error", text: msg });
+    } finally {
+      setDeletingEvent(false);
+    }
+  };
 
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,7 +172,6 @@ export default function AdminPage() {
         throw new Error(data.message || "Etkinlik oluşturulamadı.");
       }
 
-      // Yeni etkinliği listeye ekle ve QR üreticide otomatik seçili hale getir
       const created: EventItem = data.event;
       setEvents((prev) => [...prev, created]);
       setSelectedEventId(created.id);
@@ -102,7 +182,7 @@ export default function AdminPage() {
       setNewDate("");
       setCreateMessage({
         type: "success",
-        text: `"${created.title}" veritabanına eklendi ve QR kodu hazırlandı!`,
+        text: `"${created.title}" veritabanına eklendi ve tokenlı QR kodu hazırlandı!`,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Bir hata oluştu.";
@@ -157,7 +237,6 @@ export default function AdminPage() {
         </p>
 
         <div className="grid md:grid-cols-2 gap-8">
-          {/* Sol Kart: Etkinlik QR Üretici */}
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <div className="flex items-center gap-2 mb-4 text-purple-400 font-semibold">
               <QrCode className="w-5 h-5" />
@@ -171,17 +250,33 @@ export default function AdminPage() {
                     <Calendar className="w-3.5 h-3.5" />
                     <span>Kayıtlı Etkinlik Seç (Supabase)</span>
                   </label>
-                  <select
-                    value={selectedEventId}
-                    onChange={(e) => handleEventSelect(e.target.value)}
-                    className="w-full bg-slate-950 border border-purple-500/50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                  >
-                    {events.map((ev) => (
-                      <option key={ev.id} value={ev.id}>
-                        {ev.title}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedEventId}
+                      onChange={(e) => handleEventSelect(e.target.value)}
+                      className="flex-1 bg-slate-950 border border-purple-500/50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                    >
+                      {events.map((ev) => (
+                        <option key={ev.id} value={ev.id}>
+                          {ev.title}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={handleDeleteSelectedEvent}
+                      disabled={deletingEvent}
+                      title="Seçili Etkinliği Sil"
+                      className="p-2.5 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50"
+                    >
+                      {deletingEvent ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -217,11 +312,13 @@ export default function AdminPage() {
                 <p className="text-slate-400 text-xs">QR Kod hazırlanıyor...</p>
               )}
             </div>
+
+            {qrStatusNote && (
+              <p className="text-[11px] text-slate-400 mt-3 text-center">{qrStatusNote}</p>
+            )}
           </div>
 
-          {/* Sağ Sütun: Yeni Etkinlik Ekle + Sponsor Doğrulama */}
           <div className="space-y-8">
-            {/* Yeni Etkinlik Oluşturma Kartı */}
             <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
               <div className="flex items-center gap-2 mb-4 text-purple-400 font-semibold">
                 <PlusCircle className="w-5 h-5" />
@@ -292,7 +389,6 @@ export default function AdminPage() {
               )}
             </div>
 
-            {/* Sponsor Kupon Doğrulama Kartı */}
             <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
               <div className="flex items-center gap-2 mb-4 text-green-400 font-semibold">
                 <ShieldCheck className="w-5 h-5" />

@@ -77,3 +77,40 @@ export async function POST(request: Request) {
         );
     }
 }
+export async function DELETE(request: Request) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const id = searchParams.get("id");
+
+        if (!id) {
+            return NextResponse.json(
+                { success: false, message: "Silinecek etkinlik ID'si belirtilmedi." },
+                { status: 400 }
+            );
+        }
+
+        const { error } = await supabase
+            .from("events")
+            .delete()
+            .eq("id", id);
+
+        if (error) {
+            console.error("Supabase Delete Hatası:", error);
+            return NextResponse.json(
+                { success: false, message: `Silme hatası: ${error.message}` },
+                { status: 500 }
+            );
+        }
+
+        return NextResponse.json({
+            success: true,
+            message: "Etkinlik silindi.",
+        });
+    } catch (error) {
+        console.error(error);
+        return NextResponse.json(
+            { success: false, message: "Geçersiz silme isteği." },
+            { status: 400 }
+        );
+    }
+}
