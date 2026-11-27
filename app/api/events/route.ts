@@ -1,3 +1,5 @@
+import { apiError, body as readBody, json, requireUser, uuid } from "@/lib/api";
+import { metadataForBadge } from "@/lib/badge-catalog";
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { getSession } from "@/lib/auth";
@@ -53,7 +55,7 @@ async function requireAdmin(): Promise<
 export async function GET() {
     const { data, error } = await supabase
         .from("events")
-        .select("id, title, description, event_date")
+        .select("id, club_id, title, description, event_date, badge_key")
         .order("event_date", { ascending: true });
 
     if (error) {
@@ -94,8 +96,11 @@ export async function POST(request: Request) {
             title,
             description,
             event_date,
-            club_id
+            club_id,
+            badge_key
         } = body;
+
+        if (badge_key != null) metadataForBadge(badge_key);
 
         // Baslik kontrolu
         if (
@@ -188,10 +193,11 @@ export async function POST(request: Request) {
                         ? description.trim()
                         : "",
                 event_date: date.toISOString(),
-                qr_token
+                qr_token,
+                badge_key: badge_key ?? null
             })
             .select(
-                "id, title, description, event_date, qr_token"
+                "id, club_id, title, description, event_date, qr_token, badge_key"
             )
             .single();
 
@@ -215,7 +221,7 @@ export async function POST(request: Request) {
 
         console.error(error);
 
-        return fail("Etkinlik oluşturulamadı.", 500);
+        return apiError(error);
     }
 }
 
@@ -325,4 +331,18 @@ export async function DELETE(request: Request) {
 
         return fail("Etkinlik silinemedi.", 500);
     }
+}
+// Assign a catalog badge to an existing event before attendance starts.
+export async function PATCH(request: Request) {
+    try {
+        const user = await requireUser("admin");
+        const input = await readBody(request);
+        const eventId = uuid(input.event_id);
+        metadataForBadge(input.badge_key);
+        const { error } = await supabase.rpc("assign_event_badge", {
+            p_admin_id: user.id, p_event_id: eventId, p_badge_key: input.badge_key
+        });
+        if (error) throw error;
+        return json({ success: true });
+    } catch (error) { return apiError(error); }
 }

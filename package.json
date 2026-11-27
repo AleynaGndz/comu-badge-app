@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:backend": "node --test tests/*.test.mjs",
+    "lint:backend": "eslint app/api lib scripts tests",
+    "typecheck:backend": "tsc --project tsconfig.backend.json",
+    "create-tree": "node scripts/create-tree.mjs",
+    "check:backend": "node scripts/check-backend.mjs"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-bubblegum": "6.0.0",
@@ -29,6 +34,7 @@
     "tweetnacl": "1.0.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.6.1",
     "@tailwindcss/postcss": "^4.3.5",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
