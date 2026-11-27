@@ -1,22 +1,20 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { randomBytes } from "crypto";
 
 export async function GET() {
     const { data, error } = await supabase
         .from("events")
-        .select("id, title, description, event_date")
+        .select("id, title, description, event_date, qr_token")
         .order("event_date", { ascending: true });
 
     if (error) {
-            console.error("Supabase Insert Hatası:", error);
-            return NextResponse.json(
-                { 
-                    success: false, 
-                    message: `Veritabanı hatası: ${error.message}` 
-                },
-                { status: 500 }
-            );
-        }
+        console.error(error);
+        return NextResponse.json(
+            { success: false, message: "Events could not be retrieved" },
+            { status: 500 }
+        );
+    }
 
     return NextResponse.json({
         success: true,
@@ -42,20 +40,26 @@ export async function POST(request: Request) {
             );
         }
 
+        const qr_token = randomBytes(16).toString("hex");
+
         const { data, error } = await supabase
             .from("events")
             .insert({
                 title: title.trim(),
                 description: typeof description === "string" ? description.trim() : "",
                 event_date: new Date(event_date).toISOString(),
+                qr_token,
             })
-            .select("id, title, description, event_date")
+            .select("id, title, description, event_date, qr_token")
             .single();
 
         if (error) {
-            console.error(error);
+            console.error("Supabase Insert Hatası:", error);
             return NextResponse.json(
-                { success: false, message: "Etkinlik veritabanına eklenemedi." },
+                {
+                    success: false,
+                    message: `Veritabanı hatası: ${error.message}`,
+                },
                 { status: 500 }
             );
         }
