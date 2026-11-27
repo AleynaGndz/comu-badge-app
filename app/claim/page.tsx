@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Html5Qrcode } from "html5-qrcode";
+import { startScannerSession } from "@/lib/qr-scanner";
 import {
   Award,
   CheckCircle2,
@@ -260,19 +261,17 @@ function ClaimContent() {
 
     const scannerId = "claim-inline-qr-reader";
     const container = document.getElementById(scannerId);
-    if (container) {
-      container.innerHTML = "";
-    }
+    if (!container) return;
 
-    const html5QrCode = new Html5Qrcode(scannerId);
     let isCancelled = false;
-    let isStarted = false;
     isProcessingQrRef.current = false;
     setScanError(null);
     setCameraError(null);
 
-    html5QrCode
-      .start(
+    const session = startScannerSession(
+      container,
+      () => new Html5Qrcode(scannerId),
+      scanner => scanner.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 220, height: 220 } },
         (decodedText) => {
@@ -290,11 +289,9 @@ function ClaimContent() {
               setScanError(null);
               setActiveToken(scannedToken);
 
-              html5QrCode
-                .stop()
-                .then(() => html5QrCode.clear())
-                .catch(() => {})
+              session.stop()
                 .finally(() => {
+                  if (isCancelled) return;
                   setShowScanner(false);
                   submitClaim(scannedToken, false);
                 });
@@ -313,15 +310,8 @@ function ClaimContent() {
         },
         () => {}
       )
-      .then(() => {
-        isStarted = true;
-        if (isCancelled) {
-          html5QrCode
-            .stop()
-            .then(() => html5QrCode.clear())
-            .catch(() => {});
-        }
-      })
+    );
+    session.ready
       .catch((err) => {
         if (!isCancelled) {
           console.error("Kamera başlatılamadı:", err);
@@ -331,12 +321,7 @@ function ClaimContent() {
 
     return () => {
       isCancelled = true;
-      if (isStarted) {
-        html5QrCode
-          .stop()
-          .then(() => html5QrCode.clear())
-          .catch(() => {});
-      }
+      void session.stop();
     };
   }, [showScanner, eventId, submitClaim]);
 
