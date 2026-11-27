@@ -99,6 +99,6 @@ Open `http://localhost:3000` in your browser to view the application.
 ---
 
 ## 👥 Team
-* **Özber Var** (`@ozbervar`) — **Web3 & Backend:** Solana Devnet configuration, Helius/Shyft API setup, Merkle Tree creation, cNFT minting API endpoint development and pitch & Demo Day presentations .
+* **Özber Var** (`@ozbervar`) — **Web3, Backend  & Presentation:** Solana Devnet configuration, Helius/Shyft API setup, Merkle Tree creation, cNFT minting API endpoint development and pitch & Demo Day presentations .
 * **Aleyna Gündüz** (`@AleynaGndz`) — **Frontend & Integration:** Next.js project setup, Phantom wallet integration, QR code generation/scanning interfaces, and student/sponsor UI pages.
-* **Berra Çalım** (`@calimberra`) — **Design, Metadata & Presentation:** Badge artwork design, Pinata (IPFS) hosting & JSON metadata preparation (`badges.json`) and live testing management.
+* **Berra Çalım** (`@calimberra`) — **Design, Metadata :** Badge artwork design, Pinata (IPFS) hosting & JSON metadata preparation (`badges.json`) and live testing management.
