@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Calendar, Award, ArrowRight } from "lucide-react";
+import { Calendar, Award, ArrowRight, Sparkles } from "lucide-react";
 
 const WalletMultiButton = dynamic(
   async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
@@ -18,9 +18,18 @@ interface EventItem {
   event_date: string;
 }
 
+interface BadgeItem {
+  id: string;
+  title: string;
+  image_url?: string;
+  claimed_at?: string;
+  tx_signature?: string;
+}
+
 export default function Home() {
   const { publicKey } = useWallet();
   const [events, setEvents] = useState<EventItem[]>([]);
+  const [myBadges, setMyBadges] = useState<BadgeItem[]>([]);
 
   useEffect(() => {
     fetch("/api/events")
@@ -32,6 +41,24 @@ export default function Home() {
       })
       .catch((err) => console.error("Etkinlikler yüklenemedi:", err));
   }, []);
+
+  useEffect(() => {
+    if (!publicKey) {
+      setMyBadges([]);
+      return;
+    }
+
+    fetch(`/api/badges?wallet=${publicKey.toBase58()}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.badges)) {
+          setMyBadges(data.badges);
+        }
+      })
+      .catch(() => {
+        // Endpoint henüz eklenmediyse sessizce geç
+      });
+  }, [publicKey]);
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
@@ -47,7 +74,7 @@ export default function Home() {
 
       <div className="max-w-4xl mx-auto mt-10">
         {/* Cüzdan Durum Kartı */}
-        <div className="text-center mb-12">
+        <div className="text-center mb-10">
           {publicKey ? (
             <div className="p-6 bg-slate-900 rounded-xl border border-purple-500/30">
               <p className="text-green-400 font-semibold mb-1">Cüzdan Başarıyla Bağlandı!</p>
@@ -61,6 +88,45 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Kullanıcının Kazandığı Rozetler */}
+        {publicKey && (
+          <div className="mb-12">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="w-5 h-5 text-yellow-400" />
+              <h2 className="text-lg font-bold">Koleksiyonum ({myBadges.length} Rozet)</h2>
+            </div>
+
+            {myBadges.length > 0 ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {myBadges.map((badge) => (
+                  <div
+                    key={badge.id}
+                    className="bg-slate-900 border border-purple-500/30 rounded-xl p-4 flex flex-col items-center text-center"
+                  >
+                    {badge.image_url ? (
+                      <img
+                        src={badge.image_url}
+                        alt={badge.title}
+                        className="w-20 h-20 object-cover rounded-lg mb-3"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mb-3">
+                        <Award className="w-8 h-8" />
+                      </div>
+                    )}
+                    <h3 className="font-semibold text-sm">{badge.title}</h3>
+                    <span className="text-[11px] text-green-400 mt-1">Doğrulanmış cNFT</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-5 bg-slate-900/40 border border-dashed border-slate-800 rounded-xl text-center text-sm text-slate-400">
+                Henüz cüzdanında rozet görünmüyor. Aşağıdaki etkinliklerden birine katılıp ilk rozetini alabilirsin!
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Etkinlikler Listesi */}
         <div className="flex items-center gap-2 mb-6">

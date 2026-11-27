@@ -50,9 +50,24 @@ export default function AdminPage() {
     ? `${origin}/claim?event=${encodeURIComponent(selectedEventId)}&name=${encodeURIComponent(eventName)}`
     : "";
 
-  const handleVerifyStudent = (e: React.FormEvent) => {
+  const handleVerifyStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentAddress.trim()) return;
+
+    try {
+      const res = await fetch(`/api/badges?wallet=${encodeURIComponent(studentAddress.trim())}`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.badges)) {
+        setVerificationResult({
+          eligible: data.badges.length > 0,
+          badgeCount: data.badges.length,
+        });
+        return;
+      }
+    } catch {
+      // Backend /api/badges henüz eklenmediyse demo verisi göster
+    }
+
     setVerificationResult({
       eligible: true,
       badgeCount: 3,
