@@ -4,7 +4,15 @@ import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Calendar, Award, ArrowRight, Sparkles, Camera } from "lucide-react";
+import {
+  Calendar,
+  Award,
+  ArrowRight,
+  Sparkles,
+  Camera,
+  ShieldCheck,
+  Loader2,
+} from "lucide-react";
 import badgesCatalog from "../badges.json";
 
 const WalletMultiButton = dynamic(
@@ -25,6 +33,13 @@ interface BadgeItem {
   image_url?: string;
   claimed_at?: string;
   tx_signature?: string;
+}
+
+interface UserProfile {
+  id: string;
+  wallet_address: string;
+  name?: string | null;
+  role?: string | null;
 }
 
 const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
@@ -64,10 +79,14 @@ function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
 }
 
 export default function Home() {
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [myBadges, setMyBadges] = useState<BadgeItem[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
+  // Etkinlikleri yükle
   useEffect(() => {
     fetch("/api/events")
       .then((res) => res.json())
@@ -79,11 +98,24 @@ export default function Home() {
       .catch((err) => console.error("Etkinlikler yüklenemedi:", err));
   }, []);
 
+  // Mevcut JWT oturumunu ve rozetleri kontrol et
   useEffect(() => {
     if (!publicKey) {
+      setUserProfile(null);
       setMyBadges([]);
       return;
     }
+
+    fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.user?.wallet_address === publicKey.toBase58()) {
+          setUserProfile(data.user);
+        } else {
+          setUserProfile(null);
+        }
+      })
+      .catch(() => setUserProfile(null));
 
     fetch(`/api/badges?wallet=${publicKey.toBase58()}`)
       .then((res) => res.json())
@@ -95,6 +127,64 @@ export default function Home() {
       .catch(() => {});
   }, [publicKey]);
 
+  // Phantom ile mesaj imzalayıp Web3 oturumu açma
+  const handleWalletLogin = async () => {
+    if (!publicKey || !signMessage) {
+      setAuthError("Cüzdan mesaj imzalamayı desteklemiyor.");
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      const walletAddress = publicKey.toBase58();
+
+      // 1. Sunucudan tek kullanımlık nonce al
+      const nonceRes = await fetch("/api/auth/nonce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet_address: walletAddress }),
+      });
+      const nonceData = await nonceRes.json();
+
+      if (!nonceRes.ok || !nonceData.success) {
+        throw new Error(nonceData.message || "Nonce alınamadı.");
+      }
+
+      // 2. Phantom cüzdan ile mesajı imzala
+      const encodedMessage = new TextEncoder().encode(nonceData.message);
+      const signatureBytes = await signMessage(encodedMessage);
+
+      // 3. İmzayı doğrulayıp kullanıcı kaydını/oturumunu oluştur
+      const loginRes = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          nonce: nonceData.nonce,
+          signature: Array.from(signatureBytes),
+        }),
+      });
+      const loginData = await loginRes.json();
+
+      if (!loginRes.ok || !loginData.success) {
+        throw new Error(loginData.message || "Giriş doğrulanamadı.");
+      }
+
+      setUserProfile(loginData.user);
+    } catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : "";
+      if (rawMsg.toLowerCase().includes("rejected")) {
+        setAuthError("İmza isteği cüzdandan iptal edildi. Giriş yapmak için tekrar deneyebilirsin.");
+      } else {
+        setAuthError(rawMsg || "İmza işlemi tamamlanamadı.");
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const catalogEntries = Object.entries(badgesCatalog);
 
   return (
@@ -102,7 +192,10 @@ export default function Home() {
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold text-purple-400">ÇOMÜ Badge</h1>
-          <Link href="/scan" className="text-sm text-slate-300 hover:text-purple-400 flex items-center gap-1.5 transition">
+          <Link
+            href="/scan"
+            className="text-sm text-slate-300 hover:text-purple-400 flex items-center gap-1.5 transition"
+          >
             <Camera className="w-4 h-4" />
             <span>QR Okut</span>
           </Link>
@@ -114,12 +207,39 @@ export default function Home() {
       </nav>
 
       <div className="max-w-4xl mx-auto mt-10">
-        {/* Cüzdan Durum Kartı */}
+        {/* Cüzdan & Kimlik Doğrulama Kartı */}
         <div className="text-center mb-10">
           {publicKey ? (
-            <div className="p-6 bg-slate-900 rounded-xl border border-purple-500/30">
-              <p className="text-green-400 font-semibold mb-1">Cüzdan Başarıyla Bağlandı!</p>
+            <div className="p-6 bg-slate-900 rounded-xl border border-purple-500/30 space-y-3">
+              <div className="flex items-center justify-center gap-2 text-green-400 font-semibold">
+                <ShieldCheck className="w-5 h-5" />
+                <span>
+                  {userProfile
+                    ? "Web3 Oturumu Doğrulandı (Supabase Kayıtlı)"
+                    : "Cüzdan Bağlandı — Oturum Doğrulaması Bekleniyor"}
+                </span>
+              </div>
               <p className="text-xs text-slate-400 break-all">Adres: {publicKey.toBase58()}</p>
+
+              {!userProfile && (
+                <div className="pt-2">
+                  <button
+                    onClick={handleWalletLogin}
+                    disabled={authLoading}
+                    className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition cursor-pointer"
+                  >
+                    {authLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>İmza Bekleniyor...</span>
+                      </>
+                    ) : (
+                      <span>Cüzdanı İmzala ve Giriş Yap</span>
+                    )}
+                  </button>
+                  {authError && <p className="text-xs text-red-400 mt-2">{authError}</p>}
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
