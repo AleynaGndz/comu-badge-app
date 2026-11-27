@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Html5Qrcode } from "html5-qrcode";
+import { startScannerSession } from "@/lib/qr-scanner";
 import { Camera, ArrowLeft, AlertCircle, CheckCircle2 } from "lucide-react";
 
 export default function ScanPage() {
@@ -16,16 +17,15 @@ export default function ScanPage() {
   useEffect(() => {
     const scannerId = "comu-qr-reader";
     const container = document.getElementById(scannerId);
-    if (container) {
-      container.innerHTML = "";
-    }
+    if (!container) return;
 
-    const html5QrCode = new Html5Qrcode(scannerId);
     let isCancelled = false;
-    let isStarted = false;
+    isRedirectingRef.current = false;
 
-    html5QrCode
-      .start(
+    const session = startScannerSession(
+      container,
+      () => new Html5Qrcode(scannerId),
+      scanner => scanner.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
@@ -44,10 +44,9 @@ export default function ScanPage() {
               const targetPath = `${parsed.pathname}${parsed.search}`;
               setMatchedUrl(targetPath);
 
-              html5QrCode
-                .stop()
-                .catch(() => {})
+              session.stop()
                 .finally(() => {
+                  if (isCancelled) return;
                   router.push(targetPath);
                 });
               return;
@@ -62,15 +61,8 @@ export default function ScanPage() {
           // Karede QR bulunamadığında sessizce devam et
         }
       )
-      .then(() => {
-        isStarted = true;
-        if (isCancelled) {
-          html5QrCode
-            .stop()
-            .then(() => html5QrCode.clear())
-            .catch(() => {});
-        }
-      })
+    );
+    session.ready
       .catch((err) => {
         if (!isCancelled) {
           console.error("Kamera başlatılamadı:", err);
@@ -82,12 +74,7 @@ export default function ScanPage() {
 
     return () => {
       isCancelled = true;
-      if (isStarted) {
-        html5QrCode
-          .stop()
-          .then(() => html5QrCode.clear())
-          .catch(() => {});
-      }
+      void session.stop();
     };
   }, [router]);
 
