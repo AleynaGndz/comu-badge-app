@@ -143,7 +143,7 @@ function ClaimContent() {
     return () => {
       cancelled = true;
     };
-  }, [publicKey, connection]);
+  }, [publicKey, connection, depositState, refundState, bonusLamports]);
 
   // Cüzdan veya etkinlik değiştiğinde tüm claim/sonuç durumlarını sıfırla
   useEffect(() => {

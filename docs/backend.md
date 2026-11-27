@@ -261,3 +261,13 @@ keeps the stored transaction message unchanged when signing (see [Phantom priori
 fees](https://github.com/phantom/docs/blob/master/development-powertools/solana-priority-fees.md)).
 Older unsigned proposals without those instructions are refreshed before signing;
 exact message matching remains enforced by the backend.
+
+### Verified Devnet run (2026-11-28, Europe/Istanbul)
+
+Event `190b0a75-5b2d-44b9-bc9c-d35ea6f2c51a`: the student signed a 500,000,000
+lamport deposit in Phantom; the backend finalized it, QR attendance queued the
+refund, and a separate finalized transfer returned exactly 500,000,000 lamports
+to the same student. Student and custody each paid a 5,100 lamport network fee.
+The cNFT mint also finalized. No-show distribution is covered by PostgreSQL tests
+(including exact remainder allocation and repeat-call protection); it has not yet
+been exercised with a live multi-student no-show pool.
