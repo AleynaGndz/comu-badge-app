@@ -12,8 +12,9 @@ attendance → Devnet mint → collection and reward/coupon backend flows have b
 live-tested. The latest frontend is merged, but integration work remains:
 
 - Claim requests must handle HTTP 202 by polling the same claim until HTTP 200.
-- The 0.5 SOL RSVP/refund UI is a prototype. `/api/rsvp`, escrow and refunds are
-  not implemented; a local registration flag does not prove a payment.
+- Devnet deposits use a separate server custody wallet: confirmed 0.5 SOL payment,
+  QR-triggered refund, and admin-triggered equal no-show distribution are implemented.
+  This is a test custody flow, not a deployed escrow smart contract; see backend docs.
 - Sponsor cards currently contain demo promo codes; connect them to the real
   rewards, eligibility and coupon APIs before offering real rewards.
 - Connect wallet disconnect/account change to server logout. Fix the admin form

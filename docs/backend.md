@@ -201,3 +201,57 @@ frontend: that field identifies the owner, not the whole management team. Use th
 managed clubs endpoint; the server enforces membership on every action. Refresh
 `/api/auth/me` after granting a role. Only explicitly selected wallets should be
 added; never add all globally registered admins to every club automatically.
+
+
+## Devnet deposits, refunds and no-show distribution
+
+This demo uses a separate **server custody wallet**, not an escrow smart contract.
+Only Solana Devnet is supported: every payment/payout connection verifies the
+Devnet genesis hash. Never fund this wallet with mainnet SOL. Keep its key and
+original RPC configuration available until all deposits have been resolved.
+
+Apply migrations in filename order, including
+`20261127214121_club_admin_memberships.sql` and
+`20261127231007_devnet_deposits.sql`. Existing events stay free (`deposit_lamports=0`);
+new events created through the API require **500,000,000 lamports (0.5 Devnet SOL)**.
+Add a separate 64-byte JSON keypair as `DEPOSIT_SECRET_KEY` in `.env.local`.
+It must differ from `MINT_SECRET_KEY`; never commit or expose either key.
+Fund the custody wallet with free Devnet SOL for network fees (at least 0.01 SOL
+before collecting deposits). Students need 0.5 Devnet SOL plus the incoming fee.
+Outgoing fees are paid separately by custody, never deducted from refunds/bonuses.
+
+Authenticated API contracts:
+
+| Endpoint | Role and input | Result |
+| --- | --- | --- |
+| `POST /api/rsvp` | student; `{event_id}` | Own deposit plus exact unsigned legacy transaction; sign with wallet `signTransaction` only. |
+| `POST /api/rsvp/confirm` | student; `{deposit_id,signed_transaction}` (base64) | Verifies signature and stored proposal, binds before broadcast; 202 pending or 200 finalized. |
+| `GET /api/rsvp?event=UUID` | student | Own deposit and sanitized refund/bonus jobs; also reconciles submitted payments. Poll every 5 seconds. |
+| `POST /api/rsvp/refund` | student; `{event_id}` | Advances own refund only after verified paid attendance; 202 until finalized. |
+| `POST /api/deposits/reconcile` | event club administrator; `{event_id}` | Reconciles at most 10 incoming payments and 10 payouts per call. Repeat while work remains. |
+| `POST /api/events/distribute` | event club administrator; `{event_id}` | Freezes allocation after attendance closes (event time + 2 hours); advances at most 10 bonus jobs per call. |
+
+QR attendance requires a finalized deposit for paid events. The attendance
+transaction queues the full 0.5 SOL refund exactly once, **before mint completion**.
+Claim/attendance APIs attempt the payout immediately; a mint failure does not
+cancel that refund. The claim page polls pending refunds. No-show deposits are
+split equally among attendees with finalized paid registration. Integer lamport
+remainders go in deterministic wallet/user order, so the entire pool is allocated.
+No attendees means funds remain held for operator review. Unresolved incoming
+payments block allocation. Repeat allocation calls do not create new jobs.
+
+`success:true` on distribution means allocation was created/reused, **not that all
+transfers finalized**. Inspect individual payout states. This quick demo has no
+hosted background worker: refunds advance during claim/polling or admin reconcile;
+a club admin explicitly starts distribution and repeats batch reconciliation.
+If a browser/server closes, resume reconciliation; do not promise unattended payouts.
+
+Signed bytes and signatures are stored before any broadcast. Retries resend the
+same transaction. Expired ambiguous signatures become `review_required`; finalized
+failures become `failed`. Neither creates an automatic replacement transfer.
+Investigate the saved signature with an independent Devnet RPC/explorer before
+any manual recovery; never reset these rows just because a request timed out.
+This follows Solana's [transaction retry guidance](https://solana.com/developers/cookbook/transactions/retry).
+Only sanitized job data is returned; RPC credentials and signed transaction bytes
+remain service-only behind RLS. Live wallet signing/chain transfers are a separate
+verification step from the automated PostgreSQL, signature and payout tests.

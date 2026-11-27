@@ -1,3 +1,4 @@
+import { processOwnRefund } from "@/lib/deposits";
 import { apiError, ApiError, body, json, requireUser, uuid } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { recordAttendance } from "@/lib/attendance";
@@ -15,7 +16,7 @@ export async function POST(request: Request) {
       throw new ApiError("Wallet does not match the authenticated session", 403);
     }
     const { data: event, error: eventError } = await supabase.from("events")
-      .select("id, title, badge_key").eq("id", eventId).maybeSingle();
+      .select("id, title, badge_key, deposit_lamports").eq("id", eventId).maybeSingle();
     if (eventError) throw eventError;
     if (!event) throw new ApiError("Event not found", 404);
     if (!event.badge_key) throw new ApiError("Event badge has not been configured", 409);
@@ -25,6 +26,12 @@ export async function POST(request: Request) {
       .select("id, mint_status, tx_signature, nft_asset_id").eq("user_id", user.id).eq("event_id", eventId).maybeSingle();
     if (attendanceError) throw attendanceError;
     const attendance = existing ?? (await recordAttendance(user.id, eventId, input.qr_token ?? input.qrToken ?? input.token)).attendance;
+    // Refund eligibility follows verified attendance, even if minting later fails.
+    let refund: unknown = null;
+    if (Number(event.deposit_lamports) > 0) {
+      try { refund = await processOwnRefund(user.id, eventId); }
+      catch { refund = { state: "pending", message: "Use /api/rsvp/refund to reconcile the refund" }; }
+    }
     // Assignment cannot change after this attendance exists; re-read after the
     // transactional attendance check to avoid racing an admin badge assignment.
     const { data: currentEvent, error: currentError } = await supabase.from("events")
@@ -37,7 +44,7 @@ export async function POST(request: Request) {
       if (knownError) throw knownError;
       if (!knownJob) throw new ApiError("Legacy mint requires operator review; a second mint is blocked", 409);
       const result = await processMint(knownJob, input.retry_failed === true);
-      return json(result.data, result.status);
+      return json({ ...result.data, refund }, result.status);
     }
     const { error: insertError } = await supabase.from("badge_mint_jobs").upsert({
       attendance_id: attendance.id, wallet_address: user.wallet_address,
@@ -48,7 +55,7 @@ export async function POST(request: Request) {
       .select("*").eq("attendance_id", attendance.id).single();
     if (jobError) throw jobError;
     const result = await processMint(job, input.retry_failed === true);
-    const response = json(result.data, result.status);
+    const response = json({ ...result.data, refund }, result.status);
     if (result.status === 202) response.headers.set("Retry-After", "3");
     return response;
   } catch (error) { return apiError(error); }
