@@ -1,3 +1,5 @@
+import { requireClubAdmin } from "@/lib/clubs";
+import { apiError } from "@/lib/api";
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { getSession } from "@/lib/auth";
@@ -63,22 +65,7 @@ export async function GET(request: Request) {
             );
         }
 
-        // Kulup sahipligini kontrol et
-        const { data: club, error: clubError } = await supabase
-            .from("clubs")
-            .select("id")
-            .eq("id", event.club_id)
-            .eq("admin_id", user.id)
-            .maybeSingle();
-
-        if (clubError) throw clubError;
-
-        if (!club) {
-            return NextResponse.json(
-                { success: false, message: "Club access denied" },
-                { status: 403 }
-            );
-        }
+        await requireClubAdmin(user.id, event.club_id);
 
         // QR kodun icerecegi baglantiyi olustur
         const params = new URLSearchParams({
@@ -107,9 +94,6 @@ export async function GET(request: Request) {
 
         console.error(error);
 
-        return NextResponse.json(
-            { success: false, message: "QR creation failed" },
-            { status: 500 }
-        );
+        return apiError(error);
     }
 }

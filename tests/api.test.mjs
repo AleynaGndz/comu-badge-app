@@ -33,8 +33,9 @@ function harness(results = [], session = { userId: studentId, walletAddress: add
   const api = loadTs('lib/api.ts', {
     'server-only': {}, '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase },
   }, { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
+  const clubs = loadTs('lib/clubs.ts', { 'server-only': {}, '@/lib/api': api, '@/lib/supabase': { supabase } });
   const load = (file, mocks = {}) => loadTs(file, { 'server-only': {}, '@/lib/api': api,
-    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, ...mocks },
+    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, ...mocks },
     { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
   return { load, api, calls, errors };
 }
@@ -163,4 +164,40 @@ test('merged frontend qrToken field reaches attendance validation', async () => 
   });
   assert.equal((await route.POST(post({ eventId, walletAddress: address, qrToken: 'frontend-qr-token' }))).status, 202);
   assert.equal(validated, true);
+});
+
+test('club list and QR lookup accept membership-based administrators', async () => {
+  const admin = { data: { id: studentId, wallet_address: address, role: 'admin' }, error: null };
+  let h = harness([admin, { data: [{ id: eventId, name: 'Team Club', admin_id: 'different-owner' }], error: null }]);
+  const clubs = await h.load('app/api/clubs/route.ts').GET();
+  assert.equal(clubs.status, 200);
+  assert.equal((await clubs.json()).clubs[0].name, 'Team Club');
+  for (const allowed of [true, false]) {
+    h = harness([admin, { data: { id: eventId, title: 'Event', club_id: eventId, qr_token: 'secret' }, error: null },
+      { data: allowed, error: null }]);
+    const qr = await h.load('app/api/events/qr/route.ts').GET(new Request('http://localhost/api/events/qr?event=' + eventId));
+    assert.equal(qr.status, allowed ? 200 : 403, JSON.stringify(h.errors));
+    if (allowed) assert.equal(new URL((await qr.json()).claim_path, 'http://localhost').searchParams.get('token'), 'secret');
+    assert.equal(h.calls.at(-1).rpc, 'can_manage_club');
+  }
+});
+
+test('non-owner club admins cannot add members or look up the target account', async () => {
+  const h = harness([{ data: { id: studentId, wallet_address: address, role: 'admin' } }, { data: null, error: null }]);
+  const response = await h.load('app/api/clubs/admins/route.ts').POST(post({ club_id: eventId, wallet_address: address }));
+  assert.equal(response.status, 403);
+  assert.equal(h.calls.length, 2);
+});
+
+test('managed event listing filters by all administrator memberships', async () => {
+  const h = harness([
+    { data: [{ id: eventId }], error: null }, // The event query is built first.
+    { data: { id: studentId, wallet_address: address, role: 'admin' }, error: null },
+    { data: [{ id: eventId, name: 'Club', admin_id: 'owner' }], error: null },
+  ]);
+  const response = await h.load('app/api/events/route.ts', { '@/lib/badge-catalog': {} }).GET(new Request('http://localhost/api/events?managed=true'));
+  assert.equal(response.status, 200);
+  const filter = h.calls[0].operations.find(op => op[0] === 'in');
+  assert.equal(filter[1], 'club_id');
+  assert.equal(filter[2][0], eventId);
 });
