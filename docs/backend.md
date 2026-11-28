@@ -217,7 +217,7 @@ new events created through the API require **500,000,000 lamports (0.5 Devnet SO
 Add a separate 64-byte JSON keypair as `DEPOSIT_SECRET_KEY` in `.env.local`.
 It must differ from `MINT_SECRET_KEY`; never commit or expose either key.
 Fund the custody wallet with free Devnet SOL for network fees (at least 0.01 SOL
-before collecting deposits). Students need 0.5 Devnet SOL plus the incoming fee.
+before collecting deposits). Students need only 0.5 Devnet SOL. The custody wallet sponsors the incoming fee.
 Outgoing fees are paid separately by custody, never deducted from refunds/bonuses.
 
 Authenticated API contracts:
@@ -225,7 +225,7 @@ Authenticated API contracts:
 | Endpoint | Role and input | Result |
 | --- | --- | --- |
 | `POST /api/rsvp` | student; `{event_id}` | Own deposit plus exact unsigned legacy transaction; sign with wallet `signTransaction` only. |
-| `POST /api/rsvp/confirm` | student; `{deposit_id,signed_transaction}` (base64) | Verifies signature and stored proposal, binds before broadcast; 202 pending or 200 finalized. |
+| `POST /api/rsvp/confirm` | student; `{deposit_id,signed_transaction}` (base64) | Verifies the student partial signature and stored proposal, adds custody fee-payer signature, binds before broadcast; 202 pending or 200 finalized. |
 | `GET /api/rsvp?event=UUID` | student | Own deposit and sanitized refund/bonus jobs; also reconciles submitted payments. Poll every 5 seconds. |
 | `POST /api/rsvp/refund` | student; `{event_id}` | Advances own refund only after verified paid attendance; 202 until finalized. |
 | `POST /api/deposits/reconcile` | event club administrator; `{event_id}` | Reconciles at most 10 incoming payments and 10 payouts per call. Repeat while work remains. |
@@ -271,3 +271,24 @@ to the same student. Student and custody each paid a 5,100 lamport network fee.
 The cNFT mint also finalized. No-show distribution is covered by PostgreSQL tests
 (including exact remainder allocation and repeat-call protection); it has not yet
 been exercised with a live multi-student no-show pool.
+
+### Sponsored deposit fees
+
+New payment proposals name the custody wallet as fee payer and the student as SOL
+sender. The browser collects the student's partial signature and serializes with
+`requireAllSignatures:false`. The backend verifies the authenticated owner, exact
+stored proposal and student signature before co-signing with custody. It persists
+the fully signed transaction before broadcasting and never returns the custody
+signature/raw signed payment to the client. Retries reconcile the same saved
+payment. Pending old student-paid proposals are refreshed; already submitted or
+confirmed old payments keep their original signature and fee history.
+
+The student pays no transaction fee in this new flow: deposit outflow is exactly
+0.5 SOL, and verified attendance returns exactly 0.5 SOL. All deposit, refund and
+bonus network fees come from custody's additional operating balance. The club
+must fund that balance separately; student principal remains refundable in full.
+Custody is the fee payer for now, not each club president's Phantom wallet. A
+per-club sponsor wallet would require separate club-specific configuration and
+signing; never collect presidents' private keys in the frontend.
+
+Reference: [Solana fee sponsorship and partial signing](https://solana.com/docs/payments/send-payments/payment-processing/fee-abstraction).

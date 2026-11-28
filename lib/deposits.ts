@@ -1,9 +1,10 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import bs58 from "bs58";
+import { PublicKey } from "@solana/web3.js";
 import { ApiError } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import { decodeSignedPayment, depositSigner, devnetConnection, prepareSolTransfer, proposalHasExplicitFees } from "@/lib/deposit-chain";
+import { decodeSignedPayment, depositSigner, devnetConnection, prepareSolTransfer, proposalHasExplicitFees, sponsorDepositPayment } from "@/lib/deposit-chain";
 
 export interface Deposit {
   id: string; user_id: string; event_id: string; wallet_address: string; treasury_address: string;
@@ -40,15 +41,18 @@ export async function prepareDeposit(userId: string, eventId: string) {
     .select("unsigned_transaction,last_valid_block_height").eq("deposit_id", deposit.id)
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (latestError) throw latestError;
-  if (latest && proposalHasExplicitFees(latest.unsigned_transaction) && await connection.getBlockHeight("finalized") < Number(latest.last_valid_block_height) - 10) {
+  if (latest && proposalHasExplicitFees(latest.unsigned_transaction, deposit.treasury_address) && await connection.getBlockHeight("finalized") < Number(latest.last_valid_block_height) - 10) {
     return { deposit: depositView(deposit), transaction: latest.unsigned_transaction };
   }
   const prepared = await prepareSolTransfer(connection, deposit.wallet_address, deposit.treasury_address,
-    Number(deposit.lamports), `CampusPass deposit:${deposit.id}`);
+    Number(deposit.lamports), `CampusPass deposit:${deposit.id}`, deposit.treasury_address);
   const fee = (await connection.getFeeForMessage(prepared.transaction.compileMessage(), "finalized")).value;
-  const payerBalance = await connection.getBalance(prepared.transaction.feePayer!, "finalized");
-  if (fee == null || payerBalance < Number(deposit.lamports) + fee) {
-    throw new ApiError("The student wallet needs 0.5 Devnet SOL plus the transaction fee", 402);
+  const studentBalance = await connection.getBalance(new PublicKey(deposit.wallet_address), "finalized");
+  if (studentBalance < Number(deposit.lamports)) {
+    throw new ApiError("The student wallet needs exactly 0.5 Devnet SOL; network fees are sponsored", 402);
+  }
+  if (fee == null || await connection.getBalance(signer.publicKey, "finalized") < fee) {
+    throw new ApiError("Fund the custody wallet for sponsored network fees", 503);
   }
   const encoded = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
   const { error: saveError } = await supabase.from("deposit_proposals").upsert({
@@ -63,7 +67,23 @@ export function depositView(row: Deposit) {
     treasury_address: row.treasury_address, payment_signature: row.payment_signature };
 }
 export async function submitDeposit(userId: string, depositId: string, encoded: unknown) {
-  const payment = decodeSignedPayment(encoded);
+  const { data: row, error: rowError } = await supabase.from("event_deposits").select("*")
+    .eq("id", depositId).eq("user_id", userId).maybeSingle();
+  if (rowError) throw rowError;
+  if (!row) throw new ApiError("Deposit not found", 404);
+  const partial = decodeSignedPayment(encoded, row.wallet_address);
+  if (row.payment_signature) {
+    if (partial.message !== row.payment_message) throw new ApiError("Another payment is bound; reconcile it first", 409);
+    return reconcileDeposit(row as Deposit);
+  }
+  const { data: proposal, error: proposalError } = await supabase.from("deposit_proposals")
+    .select("message").eq("deposit_id", row.id).eq("message", partial.message).maybeSingle();
+  if (proposalError) throw proposalError;
+  if (!proposal) throw new ApiError("Unrecognized payment transaction", 400);
+  const signer = depositSigner();
+  if (row.treasury_address !== signer.publicKey.toBase58()) throw new ApiError("Original custody key is required", 503);
+  await devnetConnection(row.rpc_url); // Refuse sponsorship outside Devnet before signing.
+  const payment = sponsorDepositPayment(partial, proposal.message, row.wallet_address, signer);
   const { data, error } = await supabase.rpc("bind_deposit_payment", {
     p_user_id: userId, p_deposit_id: depositId, p_signature: payment.signature,
     p_signed: payment.signed, p_message: payment.message,

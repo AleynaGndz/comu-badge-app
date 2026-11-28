@@ -48,3 +48,38 @@ test('unsigned proposal encodes exact payer, recipient, 0.5 SOL and unique depos
   assert.throws(()=>decodeSignedPayment(tampered),e=>e.status===400);
   assert.throws(()=>decodeSignedPayment('not-a-transaction'),e=>e.status===400);
 });
+
+test('custody sponsors the exact deposit while student authorizes only the principal', async () => {
+  const chain=load();const student=web3.Keypair.generate();const custody=web3.Keypair.generate();
+  const {transaction}=await chain.prepareSolTransfer({getLatestBlockhash:async()=>({blockhash:web3.Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100})},
+    student.publicKey.toBase58(),custody.publicKey.toBase58(),500000000,'CampusPass deposit:test',custody.publicKey.toBase58());
+  const expected=transaction.serializeMessage().toString('base64');
+  assert.equal(transaction.feePayer.toBase58(),custody.publicKey.toBase58());
+  assert.equal(transaction.compileMessage().header.numRequiredSignatures,2);
+  transaction.partialSign(student);
+  assert.equal(transaction.signature,null); // Sponsor has not signed yet.
+  const partial=chain.decodeSignedPayment(transaction.serialize({requireAllSignatures:false}).toString('base64'),student.publicKey.toBase58());
+  const signed=chain.sponsorDepositPayment(partial,expected,student.publicKey.toBase58(),custody);
+  const complete=web3.Transaction.from(Buffer.from(signed.signed,'base64'));
+  assert.equal(complete.verifySignatures(),true);
+  assert.equal(complete.serializeMessage().toString('base64'),expected);
+  assert.equal(web3.SystemInstruction.decodeTransfer(complete.instructions[2]).lamports,500000000n);
+  assert.equal(chain.sponsorDepositPayment(partial,expected,student.publicKey.toBase58(),custody).signature,signed.signature);
+});
+
+test('sponsor refuses missing student signature, modified messages and a different fee payer', async () => {
+  const chain=load();const student=web3.Keypair.generate();const custody=web3.Keypair.generate();
+  const {transaction}=await chain.prepareSolTransfer({getLatestBlockhash:async()=>({blockhash:web3.Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100})},
+    student.publicKey.toBase58(),custody.publicKey.toBase58(),500000000,'CampusPass deposit:test',custody.publicKey.toBase58());
+  const expected=transaction.serializeMessage().toString('base64');
+  assert.throws(()=>chain.decodeSignedPayment(transaction.serialize({requireAllSignatures:false}).toString('base64'),student.publicKey.toBase58()),e=>e.status===400);
+  transaction.partialSign(student);
+  const partial=chain.decodeSignedPayment(transaction.serialize({requireAllSignatures:false}).toString('base64'),student.publicKey.toBase58());
+  assert.throws(()=>chain.sponsorDepositPayment(partial,'arbitrary-message',student.publicKey.toBase58(),custody),e=>e.status===400);
+  assert.throws(()=>chain.sponsorDepositPayment(partial,expected,student.publicKey.toBase58(),web3.Keypair.generate()),e=>e.status===400);
+  transaction.instructions[2]=web3.SystemProgram.transfer({fromPubkey:student.publicKey,toPubkey:custody.publicKey,lamports:1});
+  assert.throws(()=>chain.decodeSignedPayment(transaction.serialize({requireAllSignatures:false,verifySignatures:false}).toString('base64'),student.publicKey.toBase58()),e=>e.status===400);
+  transaction.partialSign(student);
+  const changed=chain.decodeSignedPayment(transaction.serialize({requireAllSignatures:false}).toString('base64'),student.publicKey.toBase58());
+  assert.throws(()=>chain.sponsorDepositPayment(changed,expected,student.publicKey.toBase58(),custody),e=>e.status===400);
+});

@@ -250,7 +250,7 @@ function ClaimContent() {
       const signed = await signTransaction(transaction);
       if (registrationRequest.current !== requestId) return;
       const submitted = await fetch("/api/rsvp/confirm", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deposit_id: proposal.deposit.id, signed_transaction: signed.serialize().toString("base64") }) });
+        body: JSON.stringify({ deposit_id: proposal.deposit.id, signed_transaction: signed.serialize({ requireAllSignatures: false }).toString("base64") }) });
       const result = await submitted.json();
       if (!submitted.ok) throw new Error(result.message || "Depozito doğrulanamadı.");
       if (registrationRequest.current !== requestId) return;
@@ -488,7 +488,7 @@ function ClaimContent() {
             )}
           </div>
           <p className="text-slate-400">
-            QR katılımı doğrulandığında <strong>0.5 Devnet SOL</strong> iaden başlatılır. İşlem kesinleşince tamamlandığı gösterilir.
+            QR katılımı doğrulandığında <strong>0.5 Devnet SOL</strong> iaden başlatılır. Gönderim, iade ve dağıtım ağ ücretlerini biz karşılıyoruz; senden yalnızca depozito çıkar.
           </p>
           <div className="flex items-start gap-2 text-emerald-300/90 pt-1">
             <Users className="w-4 h-4 shrink-0 mt-0.5" />
