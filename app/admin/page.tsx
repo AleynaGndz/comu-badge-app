@@ -19,6 +19,8 @@ import {
   Gift,
   Ticket,
   X,
+  Coins,
+  RefreshCw,
 } from "lucide-react";
 
 const WalletMultiButton = dynamic(
@@ -33,6 +35,7 @@ interface EventItem {
   event_date: string;
   club_id?: string | null;
   badge_key?: string | null;
+  deposit_lamports?: number | null;
 }
 
 interface ClubItem {
@@ -79,6 +82,8 @@ export default function AdminPage() {
   const [qrError, setQrError] = useState<string | null>(null);
   const [loadingQr, setLoadingQr] = useState(false);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
+  const [reconcilingEventId, setReconcilingEventId] = useState<string | null>(null);
+  const [distributingEventId, setDistributingEventId] = useState<string | null>(null);
   const [listMessage, setListMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -287,7 +292,7 @@ export default function AdminPage() {
     }
   };
 
-  // Seçili etkinlik için canlı QR kodunu sunucudan çek (yedek QR yok)
+  // Seçili etkinlik için canlı QR kodunu sunucudan çek
   const handleOpenLiveQr = async (ev: EventItem) => {
     window.scrollTo({ top: 0, behavior: "smooth" });
     setActiveQrEvent(ev);
@@ -314,6 +319,72 @@ export default function AdminPage() {
       setQrError("QR servisine bağlanılamadı.");
     } finally {
       setLoadingQr(false);
+    }
+  };
+
+  // Bekleyen depozito ve iadeleri blokzincir ile uzlaştır (POST /api/deposits/reconcile)
+  const handleReconcileDeposits = async (ev: EventItem) => {
+    setReconcilingEventId(ev.id);
+    setListMessage(null);
+
+    try {
+      const res = await fetch("/api/deposits/reconcile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: ev.id }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Depozito ve iadeler güncellenemedi.");
+      }
+
+      const count = Array.isArray(data.results) ? data.results.length : 0;
+      setListMessage({
+        type: "success",
+        text:
+          count > 0
+            ? `"${ev.title}" için ${count} bekleyen depozito/iade işlemi kontrol edildi.`
+            : `"${ev.title}" için bekleyen depozito veya iade işlemi bulunmuyor.`,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Uzlaştırma işlemi başarısız.";
+      setListMessage({ type: "error", text: msg });
+    } finally {
+      setReconcilingEventId(null);
+    }
+  };
+
+  // Katılıp gelmeyenlerin depozitolarını katılanlara eşit dağıt (POST /api/events/[id]/distribute)
+  const handleDistributeNoShow = async (ev: EventItem) => {
+    setDistributingEventId(ev.id);
+    setListMessage(null);
+
+    try {
+      const res = await fetch(`/api/events/${encodeURIComponent(ev.id)}/distribute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: ev.id }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Gelmeyenlerin payı dağıtılamadı.");
+      }
+
+      const payoutCount = Array.isArray(data.payouts) ? data.payouts.length : 0;
+      setListMessage({
+        type: "success",
+        text:
+          payoutCount > 0
+            ? `"${ev.title}" için gelmeyenlerin havuzu ${payoutCount} katılımcıya dağıtıldı!`
+            : `"${ev.title}" dağıtım kontrolü tamamlandı (yeni bekleyen dağıtım kaydı yok).`,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Dağıtım işlemi başarısız.";
+      setListMessage({ type: "error", text: msg });
+    } finally {
+      setDistributingEventId(null);
     }
   };
 
@@ -433,7 +504,7 @@ export default function AdminPage() {
     }
   };
 
-  // Gerçek Sponsor Uygunluk Sorgulama (POST /api/rewards/eligibility)
+  // Gerçek Sponsor Uygunluk Sorgulama
   const handleVerifyEligibility = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentAddress.trim() || !selectedRewardId) return;
@@ -471,7 +542,7 @@ export default function AdminPage() {
     }
   };
 
-  // Tek Kullanımlık Sponsor Kupon Kodu Bozdurma (POST /api/coupons/redeem)
+  // Tek Kullanımlık Sponsor Kupon Kodu Bozdurma
   const handleRedeemCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!couponCodeInput.trim()) return;
@@ -590,10 +661,10 @@ export default function AdminPage() {
           Topluluk & Sponsor Yönetim Paneli
         </h1>
         <p className="text-slate-400 mb-8 text-sm">
-          Etkinlik oluşturun, alttaki listeden etkinlik zamanı geldiğinde canlı QR ekranını yansıtın ve sponsor kuponlarını doğrulayın.
+          Etkinlik oluşturun, alttaki listeden etkinlik zamanı geldiğinde canlı QR ekranını yansıtın, depozitoları uzlaştırın ve sponsor kuponlarını doğrulayın.
         </p>
 
-        {/* Canlı QR Ekranı Kutusu (Bir etkinlik seçildiğinde üstte belirgin açılır) */}
+        {/* Canlı QR Ekranı Kutusu */}
         {activeQrEvent && (
           <div className="mb-8 bg-slate-900 border-2 border-purple-500/60 rounded-2xl p-6 shadow-2xl">
             <div className="flex items-center justify-between gap-4 mb-4">
@@ -750,7 +821,6 @@ export default function AdminPage() {
 
           {/* Sağ: Sponsor Kupon Bozdurma & Uygunluk Doğrulama */}
           <div className="space-y-6">
-            {/* Kupon Kodu Bozdurma */}
             <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
               <div className="flex items-center gap-2 mb-4 text-emerald-400 font-semibold">
                 <Ticket className="w-5 h-5" />
@@ -793,7 +863,6 @@ export default function AdminPage() {
               )}
             </div>
 
-            {/* Öğrenci Uygunluk Sorgulama */}
             <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
               <div className="flex items-center gap-2 mb-4 text-green-400 font-semibold">
                 <ShieldCheck className="w-5 h-5" />
@@ -880,15 +949,15 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* Alt Bölüm: Yönetilen Etkinlikler Listesi ve Canlı QR Tetikleyicileri */}
+        {/* Alt Bölüm: Yönetilen Etkinlikler Listesi, Depozito Uzlaştırma & No-Show Dağıtımı */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
             <div className="flex items-center gap-2 text-purple-400 font-semibold">
               <Calendar className="w-5 h-5" />
-              <h2>Kayıtlı Etkinlikler Listesi ({events.length})</h2>
+              <h2>Kayıtlı Etkinlikler & Depozito Yönetimi ({events.length})</h2>
             </div>
             <span className="text-xs text-slate-400">
-              Etkinlik zamanı geldiğinde sağdaki butondan canlı QR ekranını açabilirsiniz.
+              Canlı QR açabilir, bekleyen SOL iadelerini onaylayabilir ve gelmeyenlerin payını dağıtabilirsiniz.
             </span>
           </div>
 
@@ -922,17 +991,48 @@ export default function AdminPage() {
                         timeStyle: "short",
                       })}
                       {ev.badge_key ? ` • Rozet: ${ev.badge_key}` : ""}
+                      {" • Depozito: 0.5 SOL"}
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleOpenLiveQr(ev)}
-                      className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
                     >
                       <QrCode className="w-4 h-4" />
                       <span>Canlı QR Aç</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleReconcileDeposits(ev)}
+                      disabled={reconcilingEventId === ev.id}
+                      title="Bekleyen depozito ve iade işlemlerini blokzincirde kontrol et"
+                      className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                    >
+                      {reconcilingEventId === ev.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      <span>İadeleri Uzlaştır</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDistributeNoShow(ev)}
+                      disabled={distributingEventId === ev.id}
+                      title="Katılıp gelmeyenlerin 0.5 SOL depozitosunu katılanlara eşit dağıt"
+                      className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                    >
+                      {distributingEventId === ev.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Coins className="w-3.5 h-3.5" />
+                      )}
+                      <span>Gelmeyenlerin Payını Dağıt</span>
                     </button>
 
                     <button
