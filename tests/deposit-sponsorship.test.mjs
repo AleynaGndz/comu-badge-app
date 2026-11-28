@@ -4,7 +4,7 @@ import {Keypair,Transaction,SystemInstruction} from '@solana/web3.js';
 import {loadTs} from './helpers/load-ts.mjs';
 class ApiError extends Error { constructor(message,status){super(message);this.status=status;} }
 async function setup(options={}) {
-  const student=Keypair.generate();const custody=Keypair.generate();const sent=[];const operations=[];
+  const student=Keypair.generate();const custody=Keypair.generate();const sent=[];const operations=[];const endpoints=[];
   const chain=loadTs('lib/deposit-chain.ts',{'server-only':{},'@/lib/api':{ApiError}});
   const connection={getLatestBlockhash:async()=>({blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100}),
     getBlockHeight:async()=>options.height??10,getFeeForMessage:async()=>({value:10100}),
@@ -29,12 +29,12 @@ async function setup(options={}) {
       if(options.lostBind)return {error:{code:'network'}};
       return {data:structuredClone(row),error:null};}};
   const api=loadTs('lib/deposits.ts',{'server-only':{},'@/lib/api':{ApiError},'@/lib/supabase':{supabase:db},
-    '@/lib/deposit-chain':{...chain,depositSigner:()=>custody,devnetConnection:async()=>connection,
-      sponsorDepositPayment(...args){sponsorCalls++;return chain.sponsorDepositPayment(...args);}}});
+    '@/lib/deposit-chain':{...chain,depositSigner:()=>custody,devnetConnection:async(endpoint)=>{endpoints.push(endpoint);return connection;},
+      sponsorDepositPayment(...args){sponsorCalls++;return chain.sponsorDepositPayment(...args);}}}, {process:{env:{SOLANA_RPC_URL:options.rpcUrl}}});
   const prepared=await api.prepareDeposit('student','event');
   const tx=Transaction.from(Buffer.from(prepared.transaction,'base64'));tx.partialSign(student);
   const partial=tx.serialize({requireAllSignatures:false}).toString('base64');
-  return {...api,row,custody,student,prepared,partial,operations,sent,sponsorCalls:()=>sponsorCalls};
+  return {...api,endpoints,row,custody,student,prepared,partial,operations,sent,sponsorCalls:()=>sponsorCalls};
 }
 
 test('a student with exactly 0.5 SOL can prepare a sponsored deposit without a fee balance',async()=>{
@@ -81,4 +81,14 @@ test('expired unsigned proposals require a fresh student signature before bindin
   const s=await setup({height:101});
   await assert.rejects(s.submitDeposit('student','deposit',s.partial),e=>e.status===409);
   assert.equal(s.sponsorCalls(),0);assert.equal(s.row.payment_signature,null);assert.equal(s.sent.length,0);
+});
+
+
+test('provider rotation uses current verified RPC for an existing signed deposit', async () => {
+  const s = await setup({rpcUrl:'https://new-devnet.example', receiptError:true});
+  await s.submitDeposit('student','deposit',s.partial);
+  assert.ok(s.endpoints.slice(1).every(endpoint=>endpoint==='https://new-devnet.example'));
+  assert.equal(s.row.rpc_url,'devnet');
+  assert.equal(s.row.state,'submitted');
+  assert.equal(s.sponsorCalls(),1);
 });
