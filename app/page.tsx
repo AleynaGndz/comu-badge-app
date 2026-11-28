@@ -57,6 +57,7 @@ interface RewardCampaign {
 }
 
 interface StudentCoupon {
+  badge_cost?: number;
   id: string;
   reward_id: string;
   code: string;
@@ -343,8 +344,7 @@ export default function Home() {
   const catalogEntries = Object.entries(badgesCatalog);
   const totalBadges = myBadges.length;
   const spentBadges = myCoupons.reduce((sum, coupon) => {
-    const matchedReward = rewards.find((r) => r.id === coupon.reward_id);
-    return sum + (matchedReward ? Number(matchedReward.required_badges) || 0 : 0);
+    return sum + Number(coupon.badge_cost ?? 0);
   }, 0);
   const badgeCount = Math.max(0, totalBadges - spentBadges);
 
@@ -581,7 +581,7 @@ export default function Home() {
                           {existingCoupon ? (
                             <>
                               <Check className="w-3 h-3" />
-                              <span>{reward.required_badges} Rozet Harcandı</span>
+                              <span>{existingCoupon.badge_cost ?? 0} Rozet Harcandı</span>
                             </>
                           ) : isUnlocked ? (
                             <>

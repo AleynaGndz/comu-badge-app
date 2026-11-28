@@ -23,7 +23,6 @@ export async function POST(request: Request) {
     const input = await body(request);
     const rewardId = uuid(input.reward_id);
 
-    // 1. Hedef ödülü, aktif kampanyaları, öğrencinin kuponlarını ve rozet sayısını çek
     const [
       { data: targetReward, error: rewardErr },
       { data: activeRewards, error: activeErr },
@@ -42,7 +41,6 @@ export async function POST(request: Request) {
     if (badgeErr) throw badgeErr;
     if (!targetReward) throw new ApiError("Kampanya bulunamadı.", 404);
 
-    // Öğrenci bu kampanya için zaten kupon aldıysa mevcut kuponu döndür
     const alreadyIssued = (existingCoupons || []).some((c) => c.reward_id === rewardId);
     if (!alreadyIssued) {
       const rewardCostMap = new Map(

@@ -19,7 +19,7 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const schema = await response.json();
     const columns = { event_deposits: ['payment_signature'], deposit_proposals: ['message'], sol_payouts: ['kind', 'lamports'], club_admins: ['club_id', 'user_id'], events: ['badge_key', 'deposit_lamports'], auth_nonces: ['requester_hash'],
       badge_mint_jobs: ['signed_transaction', 'failed_attempts'],
-      rewards: ['active', 'expires_at'], coupons: ['used_by'] };
+      rewards: ['active', 'expires_at'], coupons: ['used_by', 'badge_cost'] };
     for (const [table, names] of Object.entries(columns)) {
       for (const name of names) {
         const found = Boolean(schema.definitions?.[table]?.properties?.[name]);
@@ -28,7 +28,7 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
       }
     }
     for (const name of ['record_attendance', 'issue_login_nonce', 'complete_badge_mint',
-      'create_deposit_intent', 'bind_deposit_payment', 'confirm_deposit_payment', 'queue_deposit_refund', 'distribute_no_show_deposits', 'assign_event_badge', 'can_manage_club', 'managed_clubs', 'set_club_admin', 'create_club_event', 'delete_club_event', 'reset_failed_badge_mint', 'issue_reward_coupon', 'redeem_reward_coupon']) {
+      'create_deposit_intent', 'bind_deposit_payment', 'confirm_deposit_payment', 'queue_deposit_refund', 'distribute_no_show_deposits', 'assign_event_badge', 'can_manage_club', 'managed_clubs', 'set_club_admin', 'create_club_event', 'delete_club_event', 'reset_failed_badge_mint', 'issue_reward_coupon', 'coupon_badge_balance', 'redeem_reward_coupon']) {
       const found = Boolean(schema.paths?.[`/rpc/${name}`]);
       console.log(`database RPC ${name}: ${found ? 'OK' : 'MIGRATION REQUIRED'}`);
       if (!found) missing = true;

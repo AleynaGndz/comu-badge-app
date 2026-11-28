@@ -292,3 +292,50 @@ per-club sponsor wallet would require separate club-specific configuration and
 signing; never collect presidents' private keys in the frontend.
 
 Reference: [Solana fee sponsorship and partial signing](https://solana.com/docs/payments/send-payments/payment-processing/fee-abstraction).
+
+
+### Readable coupon codes
+
+New coupons use `CP-XXXX-XXXX-XX`: ten cryptographically random characters from
+32 symbols (50 bits), excluding 0/O and 1/I. The database unique index prevents
+duplicates; generation retries at most three times on collisions. Sponsor redeem
+accepts lowercase or omitted separators and normalizes to the stored format.
+Existing 48-character hex codes remain redeemable; requesting an existing coupon
+returns that original coupon. Codes are not converted or reissued automatically.
+Eligibility, reward ownership, campaign expiry and single-use checks are unchanged.
+
+
+### Spendable badge credits (frontend integration)
+
+Apply `20261128110020_coupon_badge_spending.sql` after the existing migrations.
+Physical cNFTs stay in the collection. Each new coupon consumes `required_badges`
+credits and saves that price in `coupons.badge_cost`. Issuance locks the student
+row before checking confirmed app-issued mints minus all coupon costs; different
+simultaneous reward requests cannot spend the same credit twice. Reissuing the
+same coupon consumes nothing further. A redeemed/expired coupon still counts as
+spent; there is no automatic credit refund. Campaign price edits affect only new
+coupons. Existing coupons are backfilled once using the campaign's current price;
+historical prices were not previously recorded and cannot be reconstructed.
+Already overspent historical balances are shown as zero available; coupons and
+NFTs are retained. `GET /api/coupons` includes `badge_cost` and a `balance` object
+with `total`, `spent` and `available`. Sponsor eligibility also checks this balance
+(or accepts an existing unused coupon). Collection count remains the total NFT
+count. The frontend uses saved costs, including coupons from closed campaigns.
+
+
+### RPC history-query throttling recovery
+
+Deposit, refund and mint confirmation read finalized `getTransaction` receipts,
+not the provider's independently throttled history-status endpoint. Read errors
+preserve the signed job and return processing; they are never interpreted as an
+absent transaction or a successful payment. Receipt metadata must include `err`.
+A student signature whose proposal already expired is rejected before custody
+co-signing/binding so the student can request a fresh unsigned proposal.
+
+Expired *bound* payments still require operator review. For the Coffee Talk test
+incident, two unlanded attempts were backed up privately and reset with signature-
+matched updates only after verifying: no finalized transaction receipt, an invalid
+blockhash beyond its last valid height, and absence from the treasury's complete
+finalized transaction history. No transfers were sent during that repair; the
+confirmed payment was left intact. Never clear an ambiguous payment just because
+one RPC request timed out, and never create a new signature for a confirmed job.

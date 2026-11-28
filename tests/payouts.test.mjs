@@ -22,7 +22,7 @@ function setup(options={}) {
       if(patch?.state==='prepared'&&options.lostSave)return Promise.resolve({error:{code:'network'}}).then(resolve);
       return Promise.resolve({data:structuredClone(job),error:null}).then(resolve);}};return q;}};
   const connection={
-    getSignatureStatuses:async()=>({value:[options.chainStatus??null]}),getBlockHeight:async()=>options.height??10,
+    getTransaction:async()=>{if(options.receiptError)throw Error('429');return options.chainStatus?{meta:{err:options.chainStatus.err}}:null;},getBlockHeight:async()=>options.height??10,
     getBalance:async()=>options.balance??2000000000,getFeeForMessage:async()=>({value:5000}),
     sendRawTransaction:async raw=>{sent.push(Buffer.from(raw).toString('base64'));if(options.sendError)throw new Error('timeout');return signature;},
   };
@@ -54,4 +54,11 @@ test('finalized payout success is idempotent; expiry or failure never creates a 
 test('insufficient custody balance keeps the refund pending without sending or reducing its principal',async()=>{
   const s=setup({balance:500000000});await assert.rejects(s.processPayout(structuredClone(s.job)),e=>e.status===503);
   assert.equal(s.sent.length,0);assert.equal(s.job.state,'pending');assert.equal(s.job.lamports,500000000);
+});
+
+test('receipt failures keep an outgoing payment intact without a replacement broadcast',async()=>{
+  const s=setup({state:'submitted',receiptError:true});const before=s.job.tx_signature;
+  const view=await s.processPayout(structuredClone(s.job));
+  assert.equal(view.state,'submitted');assert.equal(s.job.tx_signature,before);
+  assert.equal(s.sent.length,0);assert.equal(s.prepared(),0);
 });

@@ -883,7 +883,7 @@ export default function AdminPage() {
                       <input
                         type="text"
                         required
-                        placeholder="Örn: CPN-9F3A..."
+                        placeholder="Örn: CP-7K4M-9X2R-QT"
                         value={couponCodeInput}
                         onChange={(e) => setCouponCodeInput(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-emerald-500"
