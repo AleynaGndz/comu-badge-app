@@ -342,11 +342,22 @@ export default function Home() {
     <main className="min-h-screen bg-slate-950 text-white p-8">
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
-          <h1 className="text-xl font-bold text-purple-400">ÇOMÜ Badge</h1>
-          <Link href="/admin" className="text-sm text-slate-400 hover:text-white transition">
-            Yönetim & QR
-          </Link>
-        </div>
+            <Link
+              href="/"
+              className="text-xl font-bold text-purple-400 hover:text-purple-300 transition"
+            >
+              ÇOMÜ Badge
+            </Link>
+
+            {(userProfile?.role === "admin" || userProfile?.role === "sponsor") && (
+              <Link
+                href="/admin"
+                className="text-xs text-slate-300 hover:text-purple-400 transition"
+              >
+                Yönetim &amp; QR
+              </Link>
+            )}
+          </div>
         <WalletMultiButton />
       </nav>
 

@@ -207,7 +207,7 @@ export default function AdminPage() {
 
   // Oturum açıldığında kulüpleri ve sponsor kampanyalarını çek
   useEffect(() => {
-    if (!userProfile) {
+    if (!userProfile || (userProfile.role !== "admin" && userProfile.role !== "sponsor")) {
       setClubs([]);
       setSponsorRewards([]);
       return;
@@ -355,21 +355,32 @@ export default function AdminPage() {
     }
   };
 
-  // Katılıp gelmeyenlerin depozitolarını katılanlara eşit dağıt (POST /api/events/[id]/distribute)
   const handleDistributeNoShow = async (ev: EventItem) => {
     setDistributingEventId(ev.id);
     setListMessage(null);
 
     try {
-      const res = await fetch(`/api/events/${encodeURIComponent(ev.id)}/distribute`, {
+      const res = await fetch("/api/events/distribute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event_id: ev.id }),
       });
+
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(`Sunucu beklenmeyen bir yanıt döndürdü (HTTP ${res.status}).`);
+      }
+
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Gelmeyenlerin payı dağıtılamadı.");
+        const rawMessage = data.message || "";
+        if (rawMessage.includes("No attendees")) {
+          throw new Error(
+            "Bu etkinlikte QR okutan katılımcı bulunmadığı için dağıtım yapılamadı (fonlar inceleme için kasada tutuldu)."
+          );
+        }
+        throw new Error(rawMessage || "Gelmeyenlerin payı dağıtılamadı.");
       }
 
       const payoutCount = Array.isArray(data.payouts) ? data.payouts.length : 0;
@@ -602,17 +613,28 @@ export default function AdminPage() {
     );
   };
 
+  const isAuthorizedRole =
+    userProfile?.role === "admin" || userProfile?.role === "sponsor";
+
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
       <div className="max-w-5xl mx-auto">
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6 pb-4 border-b border-slate-800">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-400 transition"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Ana Sayfaya Dön</span>
-          </Link>
+          <div className="flex items-center gap-6">
+            <Link
+              href="/"
+              className="text-xl font-bold text-purple-400 hover:text-purple-300 transition"
+            >
+              ÇOMÜ Badge
+            </Link>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-400 transition"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Ana Sayfaya Dön</span>
+            </Link>
+          </div>
           <WalletMultiButton />
         </div>
 
@@ -657,460 +679,482 @@ export default function AdminPage() {
           )}
         </div>
 
-        <h1 className="text-2xl font-bold text-purple-400 mb-2">
-          Topluluk & Sponsor Yönetim Paneli
-        </h1>
-        <p className="text-slate-400 mb-8 text-sm">
-          Etkinlik oluşturun, alttaki listeden etkinlik zamanı geldiğinde canlı QR ekranını yansıtın, depozitoları uzlaştırın ve sponsor kuponlarını doğrulayın.
-        </p>
-
-        {/* Canlı QR Ekranı Kutusu */}
-        {activeQrEvent && (
-          <div className="mb-8 bg-slate-900 border-2 border-purple-500/60 rounded-2xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-2 text-purple-300 font-bold">
-                <QrCode className="w-5 h-5" />
-                <span>Canlı Katılım QR Ekranı — {activeQrEvent.title}</span>
-              </div>
-              <button
-                onClick={() => {
-                  setActiveQrEvent(null);
-                  setClaimUrl("");
-                }}
-                className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white bg-slate-800 px-3 py-1.5 rounded-lg cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-                <span>Ekranı Kapat</span>
-              </button>
-            </div>
-
-            {loadingQr ? (
-              <div className="flex flex-col items-center justify-center bg-slate-950 rounded-xl p-10">
-                <Loader2 className="w-8 h-8 text-purple-400 animate-spin mb-2" />
-                <p className="text-xs text-slate-400">QR yetkisi doğrulanıyor...</p>
-              </div>
-            ) : claimUrl ? (
-              <div className="flex flex-col items-center bg-white p-8 rounded-xl">
-                <QRCodeSVG value={claimUrl} size={230} />
-                <p className="text-slate-900 font-bold text-base mt-4">{activeQrEvent.title}</p>
-                <p className="text-slate-500 text-xs mt-1">
-                  Öğrenciler etkinlik sayfasından kameralarını açarak bu kodu okutabilir.
-                </p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center bg-slate-950 border border-amber-500/40 rounded-xl p-8 text-center">
-                <Lock className="w-8 h-8 text-amber-400 mb-2" />
-                <p className="text-amber-300 text-sm font-medium max-w-md">
-                  {qrError || "Bu QR kodunu açmak için yetkili kulüp yöneticisi oturumu gereklidir."}
-                </p>
-              </div>
-            )}
+        {/* Öğrenci Rolü Koruması */}
+        {userProfile && !isAuthorizedRole ? (
+          <div className="p-8 bg-slate-900 border border-amber-500/40 rounded-2xl text-center space-y-4">
+            <Lock className="w-10 h-10 text-amber-400 mx-auto" />
+            <h1 className="text-xl font-bold text-white">Yetkisiz Erişim</h1>
+            <p className="text-sm text-slate-400 max-w-md mx-auto">
+              Bu yönetim paneli yalnızca yetkili{" "}
+              <strong className="text-slate-200">Topluluk Yöneticileri (Admin)</strong> ve{" "}
+              <strong className="text-slate-200">Sponsor</strong> hesapları içindir. Öğrenci hesabınızla etkinliklere ana sayfadan katılabilirsiniz.
+            </p>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-5 py-2.5 rounded-xl transition"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Ana Sayfaya Dön</span>
+            </Link>
           </div>
-        )}
+        ) : (
+          <>
+            <h1 className="text-2xl font-bold text-purple-400 mb-2">
+              Topluluk & Sponsor Yönetim Paneli
+            </h1>
+            <p className="text-slate-400 mb-8 text-sm">
+              Etkinlik oluşturun, alttaki listeden etkinlik zamanı geldiğinde canlı QR ekranını yansıtın, depozitoları uzlaştırın ve sponsor kuponlarını doğrulayın.
+            </p>
 
-        {/* Üst Bölüm: 1. Yeni Etkinlik Ekleme & 2. Sponsor İşlemleri */}
-        <div className="grid md:grid-cols-2 gap-8 mb-10">
-          {/* Sol: Yeni Kampüs Etkinliği Ekle */}
-          <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
-            <div className="flex items-center gap-2 mb-4 text-purple-400 font-semibold">
-              <PlusCircle className="w-5 h-5" />
-              <h2>1. Yeni Kampüs Etkinliği Ekle</h2>
-            </div>
-
-            <form onSubmit={handleCreateEvent} className="space-y-4">
-              {clubs.length > 0 && (
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Kulüp Seçimi</label>
-                  <select
-                    value={selectedClubId}
-                    onChange={(e) => setSelectedClubId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+            {/* Canlı QR Ekranı Kutusu */}
+            {activeQrEvent && (
+              <div className="mb-8 bg-slate-900 border-2 border-purple-500/60 rounded-2xl p-6 shadow-2xl">
+                <div className="flex items-center justify-between gap-4 mb-4">
+                  <div className="flex items-center gap-2 text-purple-300 font-bold">
+                    <QrCode className="w-5 h-5" />
+                    <span>Canlı Katılım QR Ekranı — {activeQrEvent.title}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveQrEvent(null);
+                      setClaimUrl("");
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white bg-slate-800 px-3 py-1.5 rounded-lg cursor-pointer"
                   >
-                    {clubs.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    <X className="w-4 h-4" />
+                    <span>Ekranı Kapat</span>
+                  </button>
                 </div>
-              )}
 
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Etkinlik Başlığı</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Örn: Solana Geliştirici Buluşması"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  Etkinlik Başlangıç Tarih ve Saati
-                </label>
-                <input
-                  type="datetime-local"
-                  required
-                  value={newDate}
-                  onChange={(e) => setNewDate(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              {badgeCatalog.length > 0 && (
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">
-                    Verilecek cNFT Rozet Tasarımı
-                  </label>
-                  <select
-                    value={selectedBadgeKey}
-                    onChange={(e) => setSelectedBadgeKey(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                  >
-                    {badgeCatalog.map((b) => (
-                      <option key={b.badge_key} value={b.badge_key}>
-                        {b.badge_key}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Açıklama</label>
-                <textarea
-                  rows={2}
-                  placeholder="Etkinlik hakkında kısa bilgi..."
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={creatingEvent}
-                className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition inline-flex items-center justify-center gap-2 cursor-pointer"
-              >
-                {creatingEvent ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Kaydediliyor...</span>
-                  </>
+                {loadingQr ? (
+                  <div className="flex flex-col items-center justify-center bg-slate-950 rounded-xl p-10">
+                    <Loader2 className="w-8 h-8 text-purple-400 animate-spin mb-2" />
+                    <p className="text-xs text-slate-400">QR yetkisi doğrulanıyor...</p>
+                  </div>
+                ) : claimUrl ? (
+                  <div className="flex flex-col items-center bg-white p-8 rounded-xl">
+                    <QRCodeSVG value={claimUrl} size={230} />
+                    <p className="text-slate-900 font-bold text-base mt-4">{activeQrEvent.title}</p>
+                    <p className="text-slate-500 text-xs mt-1">
+                      Öğrenciler etkinlik sayfasından kameralarını açarak bu kodu okutabilir.
+                    </p>
+                  </div>
                 ) : (
-                  <span>Etkinliği Oluştur</span>
+                  <div className="flex flex-col items-center justify-center bg-slate-950 border border-amber-500/40 rounded-xl p-8 text-center">
+                    <Lock className="w-8 h-8 text-amber-400 mb-2" />
+                    <p className="text-amber-300 text-sm font-medium max-w-md">
+                      {qrError || "Bu QR kodunu açmak için yetkili kulüp yöneticisi oturumu gereklidir."}
+                    </p>
+                  </div>
                 )}
-              </button>
-            </form>
-
-            {createMessage && (
-              <div
-                className={`mt-4 p-3 rounded-lg text-xs border ${
-                  createMessage.type === "success"
-                    ? "bg-green-950/50 border-green-500/40 text-green-300"
-                    : "bg-red-950/50 border-red-500/40 text-red-300"
-                }`}
-              >
-                {createMessage.text}
               </div>
             )}
-          </div>
 
-          {/* Sağ: Sponsor Kupon Bozdurma & Uygunluk Doğrulama */}
-          <div className="space-y-6">
-            <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
-              <div className="flex items-center gap-2 mb-4 text-emerald-400 font-semibold">
-                <Ticket className="w-5 h-5" />
-                <h2>2. Sponsor Kupon Kodu Kullan (Redeem)</h2>
+            {/* Üst Bölüm: 1. Yeni Etkinlik Ekleme & 2. Sponsor İşlemleri */}
+            <div className="grid md:grid-cols-2 gap-8 mb-10">
+              {/* Sol: Yeni Kampüs Etkinliği Ekle */}
+              <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-2 mb-4 text-purple-400 font-semibold">
+                  <PlusCircle className="w-5 h-5" />
+                  <h2>1. Yeni Kampüs Etkinliği Ekle</h2>
+                </div>
+
+                <form onSubmit={handleCreateEvent} className="space-y-4">
+                  {clubs.length > 0 && (
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Kulüp Seçimi</label>
+                      <select
+                        value={selectedClubId}
+                        onChange={(e) => setSelectedClubId(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                      >
+                        {clubs.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Etkinlik Başlığı</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Örn: Solana Geliştirici Buluşması"
+                      value={newTitle}
+                      onChange={(e) => setNewTitle(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">
+                      Etkinlik Başlangıç Tarih ve Saati
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={newDate}
+                      onChange={(e) => setNewDate(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  {badgeCatalog.length > 0 && (
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">
+                        Verilecek cNFT Rozet Tasarımı
+                      </label>
+                      <select
+                        value={selectedBadgeKey}
+                        onChange={(e) => setSelectedBadgeKey(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                      >
+                        {badgeCatalog.map((b) => (
+                          <option key={b.badge_key} value={b.badge_key}>
+                            {b.badge_key}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Açıklama</label>
+                    <textarea
+                      rows={2}
+                      placeholder="Etkinlik hakkında kısa bilgi..."
+                      value={newDescription}
+                      onChange={(e) => setNewDescription(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={creatingEvent}
+                    className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition inline-flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {creatingEvent ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Kaydediliyor...</span>
+                      </>
+                    ) : (
+                      <span>Etkinliği Oluştur</span>
+                    )}
+                  </button>
+                </form>
+
+                {createMessage && (
+                  <div
+                    className={`mt-4 p-3 rounded-lg text-xs border ${
+                      createMessage.type === "success"
+                        ? "bg-green-950/50 border-green-500/40 text-green-300"
+                        : "bg-red-950/50 border-red-500/40 text-red-300"
+                    }`}
+                  >
+                    {createMessage.text}
+                  </div>
+                )}
               </div>
 
-              <form onSubmit={handleRedeemCoupon} className="space-y-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">
-                    Öğrencinin Gösterdiği Kupon Kodu
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Örn: CPN-9F3A..."
-                    value={couponCodeInput}
-                    onChange={(e) => setCouponCodeInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={redeemingCoupon}
-                  className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
-                >
-                  {redeemingCoupon ? "Kupon İşleniyor..." : "Kuponu Doğrula ve Kullan"}
-                </button>
-              </form>
+              {/* Sağ: Sponsor Kupon Bozdurma & Uygunluk Doğrulama */}
+              <div className="space-y-6">
+                <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
+                  <div className="flex items-center gap-2 mb-4 text-emerald-400 font-semibold">
+                    <Ticket className="w-5 h-5" />
+                    <h2>2. Sponsor Kupon Kodu Kullan (Redeem)</h2>
+                  </div>
 
-              {redeemResult && (
+                  <form onSubmit={handleRedeemCoupon} className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">
+                        Öğrencinin Gösterdiği Kupon Kodu
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Örn: CPN-9F3A..."
+                        value={couponCodeInput}
+                        onChange={(e) => setCouponCodeInput(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={redeemingCoupon}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                    >
+                      {redeemingCoupon ? "Kupon İşleniyor..." : "Kuponu Doğrula ve Kullan"}
+                    </button>
+                  </form>
+
+                  {redeemResult && (
+                    <div
+                      className={`mt-3 p-3 rounded-lg text-xs border ${
+                        redeemResult.type === "success"
+                          ? "bg-green-950/50 border-green-500/40 text-green-300"
+                          : "bg-red-950/50 border-red-500/40 text-red-300"
+                      }`}
+                    >
+                      {redeemResult.text}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
+                  <div className="flex items-center gap-2 mb-4 text-green-400 font-semibold">
+                    <ShieldCheck className="w-5 h-5" />
+                    <h2>3. Öğrenci Kampanya Uygunluğu</h2>
+                  </div>
+
+                  <form onSubmit={handleVerifyEligibility} className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Kampanya Seçin</label>
+                      <select
+                        value={selectedRewardId}
+                        onChange={(e) => setSelectedRewardId(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500"
+                      >
+                        {sponsorRewards.length === 0 && (
+                          <option value="">Sponsor kampanyası bulunamadı</option>
+                        )}
+                        {sponsorRewards.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.title} (Min. {r.required_badges} Rozet)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">
+                        Öğrenci Cüzdan Adresi
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Örn: A9VDvk1m..."
+                        value={studentAddress}
+                        onChange={(e) => setStudentAddress(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={verifyingStudent || !selectedRewardId}
+                      className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                    >
+                      {verifyingStudent ? "Sorgulanıyor..." : "Uygunluğu Sorgula"}
+                    </button>
+                  </form>
+
+                  {verifyError && (
+                    <div className="mt-3 p-3 bg-amber-950/50 border border-amber-500/40 rounded-lg flex items-center gap-2 text-xs text-amber-300">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{verifyError}</span>
+                    </div>
+                  )}
+
+                  {eligibilityResult && (
+                    <div
+                      className={`mt-4 p-4 border rounded-lg ${
+                        eligibilityResult.eligible
+                          ? "bg-green-950/50 border-green-500/40"
+                          : "bg-slate-950 border-slate-800"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-semibold mb-1 text-sm">
+                        {eligibilityResult.eligible ? (
+                          <>
+                            <CheckCircle2 className="w-5 h-5 text-green-400" />
+                            <span className="text-green-400">Kampanyaya Uygun!</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="w-5 h-5 text-amber-400" />
+                            <span className="text-amber-300">Yetersiz Rozet</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300">
+                        Kazanılmış Rozet: <strong>{eligibilityResult.badgeCount}</strong> / Gerekli:{" "}
+                        <strong>{eligibilityResult.required_badges}</strong>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Alt Bölüm: Yönetilen Etkinlikler Listesi, Depozito Uzlaştırma & No-Show Dağıtımı */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
+                <div className="flex items-center gap-2 text-purple-400 font-semibold">
+                  <Calendar className="w-5 h-5" />
+                  <h2>Kayıtlı Etkinlikler & Depozito Yönetimi ({events.length})</h2>
+                </div>
+                <span className="text-xs text-slate-400">
+                  Canlı QR açabilir, bekleyen SOL iadelerini onaylayabilir ve gelmeyenlerin payını dağıtabilirsiniz.
+                </span>
+              </div>
+
+              {listMessage && (
                 <div
-                  className={`mt-3 p-3 rounded-lg text-xs border ${
-                    redeemResult.type === "success"
+                  className={`mb-4 p-3 rounded-lg text-xs border ${
+                    listMessage.type === "success"
                       ? "bg-green-950/50 border-green-500/40 text-green-300"
                       : "bg-red-950/50 border-red-500/40 text-red-300"
                   }`}
                 >
-                  {redeemResult.text}
+                  {listMessage.text}
                 </div>
+              )}
+
+              {events.length > 0 ? (
+                <div className="divide-y divide-slate-800">
+                  {events.map((ev) => (
+                    <div
+                      key={ev.id}
+                      className="py-4 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2.5">
+                          <h3 className="font-semibold text-white text-sm">{ev.title}</h3>
+                          {getEventStatusBadge(ev.event_date)}
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          {new Date(ev.event_date).toLocaleString("tr-TR", {
+                            dateStyle: "long",
+                            timeStyle: "short",
+                          })}
+                          {ev.badge_key ? ` • Rozet: ${ev.badge_key}` : ""}
+                          {" • Depozito: 0.5 SOL"}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenLiveQr(ev)}
+                          className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
+                        >
+                          <QrCode className="w-4 h-4" />
+                          <span>Canlı QR Aç</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleReconcileDeposits(ev)}
+                          disabled={reconcilingEventId === ev.id}
+                          title="Bekleyen depozito ve iade işlemlerini blokzincirde kontrol et"
+                          className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                        >
+                          {reconcilingEventId === ev.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          )}
+                          <span>İadeleri Uzlaştır</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDistributeNoShow(ev)}
+                          disabled={distributingEventId === ev.id}
+                          title="Katılıp gelmeyenlerin 0.5 SOL depozitosunu katılanlara eşit dağıt"
+                          className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                        >
+                          {distributingEventId === ev.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Coins className="w-3.5 h-3.5" />
+                          )}
+                          <span>Gelmeyenlerin Payını Dağıt</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteEvent(ev)}
+                          disabled={deletingEventId === ev.id}
+                          title="Etkinliği Sil"
+                          className="p-2 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50"
+                        >
+                          {deletingEventId === ev.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Henüz kayıtlı etkinlik bulunmuyor.</p>
               )}
             </div>
 
-            <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
-              <div className="flex items-center gap-2 mb-4 text-green-400 font-semibold">
-                <ShieldCheck className="w-5 h-5" />
-                <h2>3. Öğrenci Kampanya Uygunluğu</h2>
+            {/* Sponsor Yeni Kampanya Oluşturma */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+              <div className="flex items-center gap-2 text-emerald-400 font-semibold mb-4">
+                <Gift className="w-5 h-5" />
+                <h2>Yeni Sponsor Kampanyası Oluştur (Sponsor Hesabı)</h2>
               </div>
 
-              <form onSubmit={handleVerifyEligibility} className="space-y-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Kampanya Seçin</label>
-                  <select
-                    value={selectedRewardId}
-                    onChange={(e) => setSelectedRewardId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500"
-                  >
-                    {sponsorRewards.length === 0 && (
-                      <option value="">Sponsor kampanyası bulunamadı</option>
-                    )}
-                    {sponsorRewards.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.title} (Min. {r.required_badges} Rozet)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">
-                    Öğrenci Cüzdan Adresi
-                  </label>
+              <form onSubmit={handleCreateReward} className="grid sm:grid-cols-4 gap-3 items-end">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs text-slate-400 mb-1">Kampanya Başlığı</label>
                   <input
                     type="text"
                     required
-                    placeholder="Örn: A9VDvk1m..."
-                    value={studentAddress}
-                    onChange={(e) => setStudentAddress(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500"
+                    placeholder="Örn: Kordon Kahve %20 İndirim"
+                    value={newRewardTitle}
+                    onChange={(e) => setNewRewardTitle(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Gerekli Rozet Sayısı</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10000}
+                    required
+                    value={newRewardBadges}
+                    onChange={(e) => setNewRewardBadges(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={verifyingStudent || !selectedRewardId}
-                  className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                  disabled={creatingReward}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg text-sm transition cursor-pointer"
                 >
-                  {verifyingStudent ? "Sorgulanıyor..." : "Uygunluğu Sorgula"}
+                  {creatingReward ? "Ekleniyor..." : "Kampanya Yayınla"}
                 </button>
               </form>
 
-              {verifyError && (
-                <div className="mt-3 p-3 bg-amber-950/50 border border-amber-500/40 rounded-lg flex items-center gap-2 text-xs text-amber-300">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{verifyError}</span>
-                </div>
-              )}
-
-              {eligibilityResult && (
+              {rewardMsg && (
                 <div
-                  className={`mt-4 p-4 border rounded-lg ${
-                    eligibilityResult.eligible
-                      ? "bg-green-950/50 border-green-500/40"
-                      : "bg-slate-950 border-slate-800"
+                  className={`mt-3 p-3 rounded-lg text-xs border ${
+                    rewardMsg.type === "success"
+                      ? "bg-green-950/50 border-green-500/40 text-green-300"
+                      : "bg-red-950/50 border-red-500/40 text-red-300"
                   }`}
                 >
-                  <div className="flex items-center gap-2 font-semibold mb-1 text-sm">
-                    {eligibilityResult.eligible ? (
-                      <>
-                        <CheckCircle2 className="w-5 h-5 text-green-400" />
-                        <span className="text-green-400">Kampanyaya Uygun!</span>
-                      </>
-                    ) : (
-                      <>
-                        <AlertCircle className="w-5 h-5 text-amber-400" />
-                        <span className="text-amber-300">Yetersiz Rozet</span>
-                      </>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-300">
-                    Kazanılmış Rozet: <strong>{eligibilityResult.badgeCount}</strong> / Gerekli:{" "}
-                    <strong>{eligibilityResult.required_badges}</strong>
-                  </p>
+                  {rewardMsg.text}
                 </div>
               )}
             </div>
-          </div>
-        </div>
-
-        {/* Alt Bölüm: Yönetilen Etkinlikler Listesi, Depozito Uzlaştırma & No-Show Dağıtımı */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
-            <div className="flex items-center gap-2 text-purple-400 font-semibold">
-              <Calendar className="w-5 h-5" />
-              <h2>Kayıtlı Etkinlikler & Depozito Yönetimi ({events.length})</h2>
-            </div>
-            <span className="text-xs text-slate-400">
-              Canlı QR açabilir, bekleyen SOL iadelerini onaylayabilir ve gelmeyenlerin payını dağıtabilirsiniz.
-            </span>
-          </div>
-
-          {listMessage && (
-            <div
-              className={`mb-4 p-3 rounded-lg text-xs border ${
-                listMessage.type === "success"
-                  ? "bg-green-950/50 border-green-500/40 text-green-300"
-                  : "bg-red-950/50 border-red-500/40 text-red-300"
-              }`}
-            >
-              {listMessage.text}
-            </div>
-          )}
-
-          {events.length > 0 ? (
-            <div className="divide-y divide-slate-800">
-              {events.map((ev) => (
-                <div
-                  key={ev.id}
-                  className="py-4 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-4"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2.5">
-                      <h3 className="font-semibold text-white text-sm">{ev.title}</h3>
-                      {getEventStatusBadge(ev.event_date)}
-                    </div>
-                    <p className="text-xs text-slate-400">
-                      {new Date(ev.event_date).toLocaleString("tr-TR", {
-                        dateStyle: "long",
-                        timeStyle: "short",
-                      })}
-                      {ev.badge_key ? ` • Rozet: ${ev.badge_key}` : ""}
-                      {" • Depozito: 0.5 SOL"}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenLiveQr(ev)}
-                      className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
-                    >
-                      <QrCode className="w-4 h-4" />
-                      <span>Canlı QR Aç</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleReconcileDeposits(ev)}
-                      disabled={reconcilingEventId === ev.id}
-                      title="Bekleyen depozito ve iade işlemlerini blokzincirde kontrol et"
-                      className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
-                    >
-                      {reconcilingEventId === ev.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      )}
-                      <span>İadeleri Uzlaştır</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDistributeNoShow(ev)}
-                      disabled={distributingEventId === ev.id}
-                      title="Katılıp gelmeyenlerin 0.5 SOL depozitosunu katılanlara eşit dağıt"
-                      className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
-                    >
-                      {distributingEventId === ev.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Coins className="w-3.5 h-3.5" />
-                      )}
-                      <span>Gelmeyenlerin Payını Dağıt</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteEvent(ev)}
-                      disabled={deletingEventId === ev.id}
-                      title="Etkinliği Sil"
-                      className="p-2 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50"
-                    >
-                      {deletingEventId === ev.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500">Henüz kayıtlı etkinlik bulunmuyor.</p>
-          )}
-        </div>
-
-        {/* Sponsor Yeni Kampanya Oluşturma */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center gap-2 text-emerald-400 font-semibold mb-4">
-            <Gift className="w-5 h-5" />
-            <h2>Yeni Sponsor Kampanyası Oluştur (Sponsor Hesabı)</h2>
-          </div>
-
-          <form onSubmit={handleCreateReward} className="grid sm:grid-cols-4 gap-3 items-end">
-            <div className="sm:col-span-2">
-              <label className="block text-xs text-slate-400 mb-1">Kampanya Başlığı</label>
-              <input
-                type="text"
-                required
-                placeholder="Örn: Kordon Kahve %20 İndirim"
-                value={newRewardTitle}
-                onChange={(e) => setNewRewardTitle(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Gerekli Rozet Sayısı</label>
-              <input
-                type="number"
-                min={1}
-                max={10000}
-                required
-                value={newRewardBadges}
-                onChange={(e) => setNewRewardBadges(Number(e.target.value))}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={creatingReward}
-              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded-lg text-sm transition cursor-pointer"
-            >
-              {creatingReward ? "Ekleniyor..." : "Kampanya Yayınla"}
-            </button>
-          </form>
-
-          {rewardMsg && (
-            <div
-              className={`mt-3 p-3 rounded-lg text-xs border ${
-                rewardMsg.type === "success"
-                  ? "bg-green-950/50 border-green-500/40 text-green-300"
-                  : "bg-red-950/50 border-red-500/40 text-red-300"
-              }`}
-            >
-              {rewardMsg.text}
-            </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </main>
   );
