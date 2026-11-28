@@ -23,15 +23,21 @@ export async function POST(request: Request) {
     const input = await body(request);
     const rewardId = uuid(input.reward_id);
 
-    // 1. Hedef ödülün rozet maliyetini ve öğrencinin mevcut kuponlarını kontrol et
-    const [{ data: targetReward, error: rewardErr }, { data: existingCoupons, error: couponErr }, { count: totalBadges, error: badgeErr }] =
-      await Promise.all([
-        supabase.from("rewards").select("id, required_badges").eq("id", rewardId).maybeSingle(),
-        supabase.from("coupons").select("reward_id, rewards(required_badges)").eq("user_id", user.id),
-        supabase.from("attendances").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-      ]);
+    // 1. Hedef ödülü, aktif kampanyaları, öğrencinin kuponlarını ve rozet sayısını çek
+    const [
+      { data: targetReward, error: rewardErr },
+      { data: activeRewards, error: activeErr },
+      { data: existingCoupons, error: couponErr },
+      { count: totalBadges, error: badgeErr },
+    ] = await Promise.all([
+      supabase.from("rewards").select("id, required_badges").eq("id", rewardId).maybeSingle(),
+      supabase.from("rewards").select("id, required_badges").eq("active", true),
+      supabase.from("coupons").select("reward_id").eq("user_id", user.id),
+      supabase.from("attendances").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+    ]);
 
     if (rewardErr) throw rewardErr;
+    if (activeErr) throw activeErr;
     if (couponErr) throw couponErr;
     if (badgeErr) throw badgeErr;
     if (!targetReward) throw new ApiError("Kampanya bulunamadı.", 404);
@@ -39,9 +45,12 @@ export async function POST(request: Request) {
     // Öğrenci bu kampanya için zaten kupon aldıysa mevcut kuponu döndür
     const alreadyIssued = (existingCoupons || []).some((c) => c.reward_id === rewardId);
     if (!alreadyIssued) {
+      const rewardCostMap = new Map(
+        (activeRewards || []).map((r) => [r.id, Number(r.required_badges) || 0])
+      );
+
       const spentBadges = (existingCoupons || []).reduce((sum, item) => {
-        const rel = Array.isArray(item.rewards) ? item.rewards[0] : item.rewards;
-        return sum + (Number(rel?.required_badges) || 0);
+        return sum + (rewardCostMap.get(item.reward_id) ?? 0);
       }, 0);
 
       const availableBadges = Math.max(0, Number(totalBadges ?? 0) - spentBadges);
