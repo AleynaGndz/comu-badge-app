@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { LAMPORTS_PER_SOL, Transaction } from "@solana/web3.js";
 import { Html5Qrcode } from "html5-qrcode";
 import { startScannerSession } from "@/lib/qr-scanner";
@@ -60,12 +60,13 @@ function ClaimContent() {
   const paramEventName = searchParams.get("name") || "ÇOMÜ Topluluk Etkinliği";
   const urlToken = searchParams.get("token") || "";
 
-  const { connection } = useConnection();
   const { publicKey, signTransaction } = useWallet();
   const walletAddress = publicKey ? publicKey.toBase58() : "";
 
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
+  const balanceRequestRef = useRef(0);
 
   const [eventDetail, setEventDetail] = useState<EventDetail | null>(null);
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
@@ -128,26 +129,30 @@ function ClaimContent() {
   }, [eventId]);
 
   const refreshBalance = useCallback(() => {
-    if (!publicKey) {
-      setSolBalance(null);
-      return;
-    }
+    const requestId = ++balanceRequestRef.current;
+    setSolBalance(null);
+    setBalanceError(null);
+    if (!walletAddress) { setBalanceLoading(false); return; }
     setBalanceLoading(true);
-    connection
-      .getBalance(publicKey)
-      .then((lamports) => {
-        if (isMountedRef.current) setSolBalance(lamports / LAMPORTS_PER_SOL);
+    fetch(`/api/wallet/balance?wallet=${encodeURIComponent(walletAddress)}`)
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !Number.isSafeInteger(data.lamports) || data.lamports < 0) {
+          throw new Error(data.message || "Bakiye alınamadı. Tekrar deneyin.");
+        }
+        if (isMountedRef.current && requestId === balanceRequestRef.current) setSolBalance(data.lamports / LAMPORTS_PER_SOL);
       })
-      .catch(() => {
-        if (isMountedRef.current) setSolBalance(0);
+      .catch((error) => {
+        if (isMountedRef.current && requestId === balanceRequestRef.current) setBalanceError(error.message || "Bakiye alınamadı.");
       })
       .finally(() => {
-        if (isMountedRef.current) setBalanceLoading(false);
+        if (isMountedRef.current && requestId === balanceRequestRef.current) setBalanceLoading(false);
       });
-  }, [publicKey, connection]);
+  }, [walletAddress]);
 
   useEffect(() => {
     refreshBalance();
+    return () => { balanceRequestRef.current++; };
   }, [refreshBalance]);
 
   // Sunucudan depozito ve iade/bonus durumunu çek
@@ -561,7 +566,7 @@ function ClaimContent() {
               >
                 {balanceLoading
                   ? "Bakiye ölçülüyor..."
-                  : `Bakiye: ${(solBalance ?? 0).toFixed(4)} SOL`}
+                  : solBalance === null ? "Bakiye alınamadı" : `Bakiye: ${solBalance.toFixed(4)} SOL`}
               </span>
             )}
           </div>
@@ -731,7 +736,13 @@ function ClaimContent() {
                   </div>
                 )}
 
-                {!balanceLoading && !hasEnoughSol && !rsvpProcessing && (
+                {!balanceLoading && balanceError && (
+                  <div className="p-3 text-amber-200 text-sm">
+                    {balanceError}
+                    <button type="button" onClick={refreshBalance} className="ml-2 underline">Bakiyeyi tekrar sorgula</button>
+                  </div>
+                )}
+                {!balanceLoading && solBalance !== null && !hasEnoughSol && !rsvpProcessing && (
                   <div className="p-3 bg-amber-950/50 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-center gap-1.5">
                     <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
                     <span>

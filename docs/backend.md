@@ -350,3 +350,21 @@ errors. Custody balance is read once per preparation. Read-only mint clients are
 also reused. Signed transaction persistence and no-duplicate-transfer rules remain
 unchanged. After changing this code in development, restart the dev server to
 release keep-alive pools created by older modules.
+
+### Private Devnet RPC and wallet balances
+
+Set `SOLANA_RPC_URL` in `.env.local` to your provider's **Devnet** HTTPS endpoint,
+then restart `npm run dev`. Never commit that URL or prefix it with `NEXT_PUBLIC_`.
+Each developer must configure their own local environment; Git does not carry it.
+The shared public Devnet endpoint in `.env.example` is a development fallback,
+not a guarantee against provider throttling. All configured mint/tree settings
+must remain on Devnet. Existing submitted jobs retain their recorded RPC URL;
+keep that endpoint available until those jobs resolve.
+
+The claim page reads `/api/wallet/balance`, not a credential-bearing browser RPC.
+This authenticated, read-only endpoint only accepts the signed-in wallet. It
+coalesces requests and caches successful balances for 15 seconds (bounded to 512
+entries per process). Failed reads are not cached as zero. The UI clears outdated
+balances, ignores responses for a previous wallet, and offers a manual retry.
+Existing RPC connection reuse and rate-limit cooldown also apply to balance reads.
+A free provider plan still has quotas; monitor usage when scaling beyond tests.
