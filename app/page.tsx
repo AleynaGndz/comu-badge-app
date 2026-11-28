@@ -79,8 +79,8 @@ const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
   },
   muhendislergunu: {
     title: "Mühendisler Günü",
-    desc: "ÇOMÜ Mühendislik Topluluğu Rozeti"
-  }
+    desc: "ÇOMÜ Mühendislik Topluluğu Rozeti",
+  },
 };
 
 function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
@@ -164,7 +164,6 @@ export default function Home() {
       setMyCoupons([]);
     };
 
-    // Cüzdan bağlantısı kesildiyse sunucu oturumunu kapat
     if (!currentWallet) {
       if (previousWallet) {
         logoutServerSession();
@@ -176,7 +175,6 @@ export default function Home() {
       return;
     }
 
-    // Farklı bir cüzdana geçildiyse önce eski oturumu kapat
     if (previousWallet && previousWallet !== currentWallet) {
       logoutServerSession();
     } else {
@@ -195,7 +193,6 @@ export default function Home() {
         .catch(() => setUserProfile(null));
     }
 
-    // Cüzdana ait doğrulanmış rozetleri çek
     fetch(`/api/badges?wallet=${encodeURIComponent(currentWallet)}`)
       .then((res) => res.json())
       .then((data) => {
@@ -344,28 +341,33 @@ export default function Home() {
   };
 
   const catalogEntries = Object.entries(badgesCatalog);
-  const badgeCount = myBadges.length;
+  const totalBadges = myBadges.length;
+  const spentBadges = myCoupons.reduce((sum, coupon) => {
+    const matchedReward = rewards.find((r) => r.id === coupon.reward_id);
+    return sum + (matchedReward ? Number(matchedReward.required_badges) || 0 : 0);
+  }, 0);
+  const badgeCount = Math.max(0, totalBadges - spentBadges);
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
-            <Link
-              href="/"
-              className="text-xl font-bold text-purple-400 hover:text-purple-300 transition"
-            >
-              ÇOMÜ Badge
-            </Link>
+          <Link
+            href="/"
+            className="text-xl font-bold text-purple-400 hover:text-purple-300 transition"
+          >
+            ÇOMÜ Badge
+          </Link>
 
-            {(userProfile?.role === "admin" || userProfile?.role === "sponsor") && (
-              <Link
-                href="/admin"
-                className="text-xs text-slate-300 hover:text-purple-400 transition"
-              >
-                Yönetim &amp; QR
-              </Link>
-            )}
-          </div>
+          {(userProfile?.role === "admin" || userProfile?.role === "sponsor") && (
+            <Link
+              href="/admin"
+              className="text-xs text-slate-300 hover:text-purple-400 transition"
+            >
+              Yönetim &amp; QR
+            </Link>
+          )}
+        </div>
         <WalletMultiButton />
       </nav>
 
@@ -478,7 +480,7 @@ export default function Home() {
           <div id="koleksiyonum" className="mb-12 scroll-mt-8">
             <div className="flex items-center gap-2 mb-4">
               <Sparkles className="w-5 h-5 text-yellow-400" />
-              <h2 className="text-lg font-bold">Koleksiyonum ({badgeCount} Rozet)</h2>
+              <h2 className="text-lg font-bold">Koleksiyonum ({totalBadges} Rozet)</h2>
             </div>
 
             {myBadges.length > 0 ? (
@@ -516,7 +518,14 @@ export default function Home() {
               <h2 className="text-lg font-bold">Kampüs Sponsor İndirimleri & Ödüller</h2>
             </div>
             <span className="text-xs text-slate-400">
-              Mevcut Bakiyen: <strong className="text-purple-300">{badgeCount} Rozet</strong>
+              Mevcut Bakiyen:{" "}
+              <strong className="text-purple-300">{badgeCount} Rozet</strong>
+              {spentBadges > 0 && (
+                <span className="text-slate-500">
+                  {" "}
+                  (Toplam: {totalBadges}, Harcanan: {spentBadges})
+                </span>
+              )}
             </span>
           </div>
 
@@ -543,7 +552,7 @@ export default function Home() {
                   <div
                     key={reward.id}
                     className={`rounded-xl p-5 border flex flex-col justify-between transition ${
-                      isUnlocked
+                      isUnlocked || existingCoupon
                         ? "bg-slate-900 border-emerald-500/40 shadow-lg shadow-emerald-950/20"
                         : "bg-slate-900/60 border-slate-800"
                     }`}
@@ -552,7 +561,7 @@ export default function Home() {
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div
                           className={`p-2 rounded-lg ${
-                            isUnlocked
+                            isUnlocked || existingCoupon
                               ? "bg-emerald-500/20 text-emerald-400"
                               : "bg-slate-800 text-slate-400"
                           }`}
@@ -562,15 +571,22 @@ export default function Home() {
 
                         <span
                           className={`text-[11px] font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1 ${
-                            isUnlocked
+                            existingCoupon
+                              ? "bg-purple-500/20 text-purple-300"
+                              : isUnlocked
                               ? "bg-emerald-500/20 text-emerald-300"
                               : "bg-slate-800 text-slate-400"
                           }`}
                         >
-                          {isUnlocked ? (
+                          {existingCoupon ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>{reward.required_badges} Rozet Harcandı</span>
+                            </>
+                          ) : isUnlocked ? (
                             <>
                               <Unlock className="w-3 h-3" />
-                              <span>Kilit Açıldı</span>
+                              <span>{reward.required_badges} Rozet • Kilit Açıldı</span>
                             </>
                           ) : (
                             <>
@@ -621,7 +637,9 @@ export default function Home() {
                               <span>Kupon Oluşturuluyor...</span>
                             </>
                           ) : (
-                            <span>Kupon Kodumu Oluştur</span>
+                            <span>
+                              Kupon Kodumu Oluştur ({reward.required_badges} Rozet)
+                            </span>
                           )}
                         </button>
                       ) : (
