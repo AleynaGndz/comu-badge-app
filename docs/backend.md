@@ -378,7 +378,7 @@ running this version. `rewards.required_badge_key` is nullable: omitted/null kee
 existing general rewards. `POST /api/rewards` accepts an exact key from
 `badges.json` (case and spaces matter); unknown/empty keys return HTTP 400.
 Example: `{ "title": "Coffee discount", "required_badges": 1,
-"required_badge_key": "coffee talk" }`.
+"required_badge_key": "CoffeeTalk" }`.
 
 `GET /api/rewards` and `?mine=true` include `required_badge_key`. Students can
 request `GET /api/rewards?eligibility=true` to additionally receive
