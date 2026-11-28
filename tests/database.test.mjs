@@ -21,6 +21,7 @@ async function setup() {
   await db.exec(migration);
   await db.exec(membershipsMigration);
   await db.exec(await fs.readFile(new URL("../supabase/migrations/20261128110020_coupon_badge_spending.sql", import.meta.url), "utf8"));
+  await db.exec(await fs.readFile(new URL("../supabase/migrations/20261128122657_reward_required_badge.sql", import.meta.url), "utf8"));
   for (const role of ['student', 'student2', 'admin', 'sponsor', 'otherSponsor']) {
     await db.query('insert into users(id, wallet_address, role) values ($1,$2,$3)', [ids[role], role, role === 'student2' ? 'student' : role === 'otherSponsor' ? 'sponsor' : role]);
   }
@@ -247,4 +248,31 @@ test('coupons spend confirmed badge credits once and preserve the original cost'
     await db.exec('set role anon');
     await rejectsCode(db.query('select coupon_badge_balance($1)',[ids.student]),'42501');
   }finally{await db.close();}
+});
+
+
+test('required badge gates coupon issuance by confirmed matching event key, alongside credit cost',async()=>{
+  const db=await setup();
+  try {
+    await db.query("update rewards set required_badge_key='android',required_badges=0 where id=$1",[ids.reward]);
+    await rejectsCode(db.query('select issue_reward_coupon($1,$2,$3)',[ids.student,ids.reward,'missing']),'PT403');
+    await db.query('select record_attendance($1,$2,$3)',[ids.student,ids.event,'secret']);
+    const attendance=(await db.query('select id from attendance')).rows[0].id;
+    await db.query("insert into badge_mint_jobs(attendance_id,wallet_address,title,metadata_uri,state) values($1,'student','Badge','ipfs://badge','pending')",[attendance]);
+    await db.query("update rewards set required_badge_key='dev3pack' where id=$1",[ids.reward]);
+    await rejectsCode(db.query('select issue_reward_coupon($1,$2,$3)',[ids.student,ids.reward,'pending']),'PT403');
+    await db.query("update badge_mint_jobs set state='confirmed',signed_transaction='raw',tx_signature='signature',last_valid_block_height=100,rpc_url='https://rpc.invalid',tree_address='tree'");
+    assert.deepEqual((await db.query('select student_verified_badge_keys($1) as keys',[ids.student])).rows[0].keys,['dev3pack']);
+    await db.query("update rewards set required_badge_key='android' where id=$1",[ids.reward]);
+    await rejectsCode(db.query('select issue_reward_coupon($1,$2,$3)',[ids.student,ids.reward,'wrong-key']),'PT403');
+    await db.query("update rewards set required_badge_key='dev3pack',required_badges=2 where id=$1",[ids.reward]);
+    await rejectsCode(db.query('select issue_reward_coupon($1,$2,$3)',[ids.student,ids.reward,'cost']),'PT403');
+    await db.query('update rewards set required_badges=1 where id=$1',[ids.reward]);
+    const coupon=(await db.query('select issue_reward_coupon($1,$2,$3) as coupon',[ids.student,ids.reward,'matching'])).rows[0].coupon;
+    assert.equal(coupon.badge_cost,1);
+    const again=(await db.query('select issue_reward_coupon($1,$2,$3) as coupon',[ids.student,ids.reward,'again'])).rows[0].coupon;
+    assert.equal(again.id,coupon.id);
+    await db.exec('set role authenticated');
+    await rejectsCode(db.query('select student_verified_badge_keys($1)',[ids.student]),'42501');
+  } finally {await db.close();}
 });

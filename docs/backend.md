@@ -370,3 +370,32 @@ entries per process). Failed reads are not cached as zero. The UI clears outdate
 balances, ignores responses for a previous wallet, and offers a manual retry.
 Existing RPC connection reuse and rate-limit cooldown also apply to balance reads.
 A free provider plan still has quotas; monitor usage when scaling beyond tests.
+
+### Rewards restricted to a badge
+
+Apply `supabase/migrations/20261128122657_reward_required_badge.sql` before
+running this version. `rewards.required_badge_key` is nullable: omitted/null keeps
+existing general rewards. `POST /api/rewards` accepts an exact key from
+`badges.json` (case and spaces matter); unknown/empty keys return HTTP 400.
+Example: `{ "title": "Coffee discount", "required_badges": 1,
+"required_badge_key": "coffee talk" }`.
+
+`GET /api/rewards` and `?mine=true` include `required_badge_key`. Students can
+request `GET /api/rewards?eligibility=true` to additionally receive
+`has_required_badge` per reward. This flag covers only the specific badge gate;
+active/expiry, remaining credit cost and existing coupon status still apply.
+`POST /api/rewards/eligibility` includes the key/flag in its existing sponsor-only
+eligibility result. An already issued unused coupon remains valid.
+
+`POST /api/coupons` keeps its existing request shape (`reward_id`). The database
+checks the specific badge inside the same locked transaction as credit spending.
+Missing ownership returns HTTP 403 with `code: "REQUIRED_BADGE_MISSING"` and a
+Turkish message. Pending/failed mint jobs and attendance alone do not qualify.
+Already issued coupons are returned idempotently without spending again.
+
+Ownership means a confirmed app-issued mint linked through attendance to an event
+with that exact badge key, consistent with existing badge-credit accounting.
+It does not query current on-chain holders or arbitrary external NFTs. Any event
+using the same key qualifies; this is a badge restriction, not an event-ID filter.
+The badge condition does not add an extra credit charge or burn the NFT.
+Frontend form/selectors/cards are intentionally left for the frontend developer.
