@@ -292,3 +292,14 @@ per-club sponsor wallet would require separate club-specific configuration and
 signing; never collect presidents' private keys in the frontend.
 
 Reference: [Solana fee sponsorship and partial signing](https://solana.com/docs/payments/send-payments/payment-processing/fee-abstraction).
+
+
+### Readable coupon codes
+
+New coupons use `CP-XXXX-XXXX-XX`: ten cryptographically random characters from
+32 symbols (50 bits), excluding 0/O and 1/I. The database unique index prevents
+duplicates; generation retries at most three times on collisions. Sponsor redeem
+accepts lowercase or omitted separators and normalizes to the stored format.
+Existing 48-character hex codes remain redeemable; requesting an existing coupon
+returns that original coupon. Codes are not converted or reissued automatically.
+Eligibility, reward ownership, campaign expiry and single-use checks are unchanged.

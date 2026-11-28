@@ -33,9 +33,10 @@ function harness(results = [], session = { userId: studentId, walletAddress: add
   const api = loadTs('lib/api.ts', {
     'server-only': {}, '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase },
   }, { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
+  const couponCodes = loadTs("lib/coupon-codes.ts", { "server-only": {} });
   const clubs = loadTs('lib/clubs.ts', { 'server-only': {}, '@/lib/api': api, '@/lib/supabase': { supabase } });
   const load = (file, mocks = {}) => loadTs(file, { 'server-only': {}, '@/lib/api': api,
-    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, '@/lib/deposits': {}, ...mocks },
+    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, '@/lib/deposits': {}, '@/lib/coupon-codes': couponCodes, ...mocks },
     { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
   return { load, api, calls, errors };
 }
@@ -213,4 +214,25 @@ test('deposit and distribution endpoints enforce authentication and roles before
     assert.equal((await wrong.load(file).POST(post({ event_id: eventId }))).status, 403, file);
     assert.equal(wrong.calls.length, 1);
   }
+});
+
+
+test('short coupons are generated with bounded collision retries and remain owner/reward-bound', async () => {
+  const h=harness([student,{error:{code:'23505'}},{data:{code:'CP-7K4M-9X2R-QT'},error:null}]);
+  const res=await h.load('app/api/coupons/route.ts').POST(post({reward_id:eventId}));
+  assert.equal(res.status,200);
+  const issued=h.calls.filter(c=>c.rpc==='issue_reward_coupon');assert.equal(issued.length,2);
+  for(const c of issued){assert.match(c.params.p_code,/^CP-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{2}$/);assert.equal(c.params.p_user_id,studentId);assert.equal(c.params.p_reward_id,eventId);}
+  const full=harness([student,...Array.from({length:3},()=>({error:{code:'23505'}}))]);
+  assert.equal((await full.load('app/api/coupons/route.ts').POST(post({reward_id:eventId}))).status,503);
+});
+test('redeem accepts readable short codes and legacy codes but rejects malformed codes before RPC', async () => {
+  for(const [input,expected] of [[' cp7k4m9x2rqt ','CP-7K4M-9X2R-QT'],['A'.repeat(48),'a'.repeat(48)]]){
+    const h=harness([{data:{...student.data,role:'sponsor'},error:null},{data:{status:'used'},error:null}]);
+    assert.equal((await h.load('app/api/coupons/redeem/route.ts').POST(post({code:input}))).status,200);
+    assert.equal(h.calls[1].params.p_code,expected);
+  }
+  const bad=harness([{data:{...student.data,role:'sponsor'},error:null}]);
+  assert.equal((await bad.load('app/api/coupons/redeem/route.ts').POST(post({code:'CP-OOOO-1111-AA'}))).status,400);
+  assert.equal(bad.calls.length,1);
 });

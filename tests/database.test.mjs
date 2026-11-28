@@ -203,3 +203,19 @@ test('membership migration backfills owners and keeps existing club ownership', 
     assert.equal((await db.query('select admin_id from clubs')).rows[0].admin_id, ids.admin);
   } finally { await db.close(); }
 });
+
+test('readable coupons persist unchanged, remain unique and redeem only once', async () => {
+  const db=await setup();
+  try {
+    await db.query('update rewards set required_badges=0 where id=$1',[ids.reward]);
+    const code='CP-7K4M-9X2R-QT';
+    const issued=(await db.query('select issue_reward_coupon($1,$2,$3) as coupon',[ids.student,ids.reward,code])).rows[0].coupon;
+    assert.equal(issued.code,code);
+    const existing=(await db.query('select issue_reward_coupon($1,$2,$3) as coupon',[ids.student,ids.reward,'CP-ABCD-EFGH-JK'])).rows[0].coupon;
+    assert.equal(existing.id,issued.id);assert.equal(existing.code,code);
+    await rejectsCode(db.query('select issue_reward_coupon($1,$2,$3)',[ids.student2,ids.reward,code]),'23505');
+    await rejectsCode(db.query('select redeem_reward_coupon($1,$2)',[ids.otherSponsor,code]),'PT403');
+    await db.query('select redeem_reward_coupon($1,$2)',[ids.sponsor,code]);
+    await rejectsCode(db.query('select redeem_reward_coupon($1,$2)',[ids.sponsor,code]),'PT409');
+  } finally {await db.close();}
+});
