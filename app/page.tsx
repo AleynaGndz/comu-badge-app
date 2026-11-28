@@ -77,6 +77,10 @@ const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
     title: "Android Geliştirme Atölyesi",
     desc: "Mobil Teknoloji Eğitim Rozeti",
   },
+  muhendislergunu: { 
+    title: "Mühendisler Günü", 
+    desc: "ÇOMÜ Mühendislik Topluluğu Rozeti" 
+  }
 };
 
 function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
@@ -91,12 +95,16 @@ function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
   }
 
   return (
-    <img
-      src={`/api/badge-image?uri=${encodeURIComponent(uri)}`}
-      alt={alt}
-      onError={() => setFailed(true)}
-      className="w-28 h-28 object-contain rounded-xl mb-3 bg-slate-950 p-2"
-    />
+    <div className="w-28 h-28 flex items-center justify-center mb-3 overflow-hidden">
+      <img
+        src={`/api/badge-image?uri=${encodeURIComponent(uri)}`}
+        alt={alt}
+        onError={() => setFailed(true)}
+        className={`w-full h-full object-contain mix-blend-lighten ${
+          alt.includes("Dev3pack") ? "scale-125" : "scale-100"
+        }`}
+      />
+    </div>
   );
 }
 

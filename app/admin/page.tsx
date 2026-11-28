@@ -410,7 +410,13 @@ export default function AdminPage() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Etkinlik silinemedi.");
+        const rawMsg = data.message || "";
+        if (rawMsg.includes("deletion is blocked") || res.status === 409) {
+          throw new Error(
+            `"${ev.title}" etkinliğinde katılım/depozito kaydı bulunduğu veya etkinlik açık olduğu için silinemez.`
+          );
+        }
+        throw new Error(rawMsg || "Etkinlik silinemedi.");
       }
 
       setEvents((prev) => prev.filter((item) => item.id !== ev.id));
@@ -632,7 +638,7 @@ export default function AdminPage() {
               className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-400 transition"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Ana Sayfaya Dön</span>
+              <span>Ana Sayfa</span>
             </Link>
           </div>
           <WalletMultiButton />
