@@ -55,8 +55,15 @@ function setup(options = {}) {
     },
   };
   const rpc = {
-    async getSignatureStatuses() { return [options.chainStatuses ? options.chainStatuses.shift() : options.chainStatus ?? null]; },
-    async call() { return options.height ?? 10; },
+    async call(method,params) {
+      if(method==='getTransaction') {
+        assert.equal(params[1].commitment,'finalized');
+        if(options.receiptError)throw Error('429');
+        const status=options.chainStatuses?options.chainStatuses.shift():options.chainStatus;
+        return status?.commitment==='finalized'?{meta:{err:status.error}}:null;
+      }
+      assert.equal(method,'getBlockHeight');return options.height??10;
+    },
     async sendTransaction(transaction) {
       sent.push(transaction);
       if (options.sendError) throw new Error('network dropped after send');
@@ -166,4 +173,12 @@ test('a failed mint can retry only after an independently verified finalized err
   await assert.rejects(unknown.processMint(structuredClone(unknown.job), true), e => e.status === 409);
   assert.equal(unknown.stats().preparations, 0);
   assert.equal(unknown.sent.length, 0);
+});
+
+
+test('mint receipt rate limits never cause a replacement mint or premature success',async()=>{
+  const state=setup({state:'submitted',receiptError:true});const sig=state.job.tx_signature;
+  const r=await state.processMint(structuredClone(state.job));
+  assert.equal(r.status,202);assert.equal(r.data.success,false);
+  assert.equal(state.job.tx_signature,sig);assert.equal(state.sent.length,0);assert.equal(state.stats().preparations,0);
 });

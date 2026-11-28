@@ -321,3 +321,21 @@ NFTs are retained. `GET /api/coupons` includes `badge_cost` and a `balance` obje
 with `total`, `spent` and `available`. Sponsor eligibility also checks this balance
 (or accepts an existing unused coupon). Collection count remains the total NFT
 count. The frontend uses saved costs, including coupons from closed campaigns.
+
+
+### RPC history-query throttling recovery
+
+Deposit, refund and mint confirmation read finalized `getTransaction` receipts,
+not the provider's independently throttled history-status endpoint. Read errors
+preserve the signed job and return processing; they are never interpreted as an
+absent transaction or a successful payment. Receipt metadata must include `err`.
+A student signature whose proposal already expired is rejected before custody
+co-signing/binding so the student can request a fresh unsigned proposal.
+
+Expired *bound* payments still require operator review. For the Coffee Talk test
+incident, two unlanded attempts were backed up privately and reset with signature-
+matched updates only after verifying: no finalized transaction receipt, an invalid
+blockhash beyond its last valid height, and absence from the treasury's complete
+finalized transaction history. No transfers were sent during that repair; the
+confirmed payment was left intact. Never clear an ambiguous payment just because
+one RPC request timed out, and never create a new signature for a confirmed job.

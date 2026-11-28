@@ -25,13 +25,20 @@ function result(job: MintJob) {
     mint_status: job.state, txSignature: job.tx_signature, assetId: job.asset_id };
 }
 
+async function finalizedMintStatus(umi: ReturnType<typeof mintRpc>, signature: string) {
+  const receipt = await umi.rpc.call<{ meta?: { err: unknown } | null } | null>("getTransaction", [signature,
+    { encoding: "json", commitment: "finalized", maxSupportedTransactionVersion: 0 }]);
+  if (!receipt) return null;
+  if (!receipt.meta || !Object.prototype.hasOwnProperty.call(receipt.meta, "err")) throw new ApiError("Mint receipt is incomplete; retry later", 503);
+  return { commitment: "finalized" as const, error: receipt.meta.err };
+}
+
 export async function processMint(job: MintJob, retryFailed = false) {
   if (job.state === "confirmed") return { status: 200, data: result(job) };
   if (job.state === "failed") {
     if (!retryFailed) throw new ApiError("Mint failed on-chain; retry with retry_failed=true", 409);
     if (!job.tx_signature || !job.rpc_url) throw new ApiError("Failed mint record requires operator review", 409);
-    const [status] = await mintRpc(job.rpc_url).rpc.getSignatureStatuses(
-      [bs58.decode(job.tx_signature)], { searchTransactionHistory: true });
+    const status = await finalizedMintStatus(mintRpc(job.rpc_url), job.tx_signature);
     if (status?.commitment !== "finalized" || !status.error) {
       throw new ApiError("A new mint requires a proven finalized failure", 409);
     }
@@ -75,7 +82,7 @@ export async function processMint(job: MintJob, retryFailed = false) {
   const umi = mintRpc(job.rpc_url);
   const signature = bs58.decode(job.tx_signature);
   try {
-    const [status] = await umi.rpc.getSignatureStatuses([signature], { searchTransactionHistory: true });
+    const status = await finalizedMintStatus(umi, job.tx_signature);
     if (status?.commitment === "finalized") {
       if (status.error) {
         const { error } = await supabase.from("badge_mint_jobs").update({ state: "failed" })
