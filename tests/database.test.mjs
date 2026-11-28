@@ -20,6 +20,7 @@ async function setup() {
   await db.exec('create role anon; create role authenticated; create role service_role bypassrls; grant usage on schema public to service_role;');
   await db.exec(migration);
   await db.exec(membershipsMigration);
+  await db.exec(await fs.readFile(new URL("../supabase/migrations/20261128110020_coupon_badge_spending.sql", import.meta.url), "utf8"));
   for (const role of ['student', 'student2', 'admin', 'sponsor', 'otherSponsor']) {
     await db.query('insert into users(id, wallet_address, role) values ($1,$2,$3)', [ids[role], role, role === 'student2' ? 'student' : role === 'otherSponsor' ? 'sponsor' : role]);
   }
@@ -199,6 +200,7 @@ test('membership migration backfills owners and keeps existing club ownership', 
     await db.query("insert into users(id,wallet_address,role) values($1,'owner','admin')", [ids.admin]);
     await db.query("insert into clubs(id,name,admin_id) values($1,'Existing Club',$2)", [ids.club, ids.admin]);
     await db.exec(membershipsMigration);
+  await db.exec(await fs.readFile(new URL("../supabase/migrations/20261128110020_coupon_badge_spending.sql", import.meta.url), "utf8"));
     assert.equal((await db.query('select user_id from club_admins')).rows[0].user_id, ids.admin);
     assert.equal((await db.query('select admin_id from clubs')).rows[0].admin_id, ids.admin);
   } finally { await db.close(); }
@@ -218,4 +220,31 @@ test('readable coupons persist unchanged, remain unique and redeem only once', a
     await db.query('select redeem_reward_coupon($1,$2)',[ids.sponsor,code]);
     await rejectsCode(db.query('select redeem_reward_coupon($1,$2)',[ids.sponsor,code]),'PT409');
   } finally {await db.close();}
+});
+
+
+test('coupons spend confirmed badge credits once and preserve the original cost',async()=>{
+  const db=await setup();
+  try {
+    await db.query('select record_attendance($1,$2,$3)',[ids.student,ids.event,'secret']);
+    const attendance=(await db.query('select id from attendance')).rows[0].id;
+    const job=(await db.query("insert into badge_mint_jobs(attendance_id,wallet_address,title,metadata_uri,state,signed_transaction,tx_signature,last_valid_block_height,rpc_url,tree_address) values($1,'student','Badge','ipfs://metadata','submitted','raw','signature',100,'https://rpc.invalid','tree') returning id",[attendance])).rows[0].id;
+    await db.query('select complete_badge_mint($1,$2,$3)',[job,'signature','asset']);
+    const other='00000000-0000-4000-8000-000000000099';
+    await db.query("insert into rewards(id,sponsor_id,title,required_badges) values($1,$2,'Other',1)",[other,ids.sponsor]);
+    const results=await Promise.allSettled([ids.reward,other].map((r,i)=>db.query('select issue_reward_coupon($1,$2,$3) as coupon',[ids.student,r,'CP-ABCD-EFGH-'+(i?'23':'45')])));
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(results.find(r=>r.status==='rejected').reason.code,'PT403');
+    const coupon=results.find(r=>r.status==='fulfilled').value.rows[0].coupon;
+    assert.equal(coupon.badge_cost,1);
+    await db.query('update rewards set required_badges=20 where id=$1',[coupon.reward_id]);
+    const again=(await db.query('select issue_reward_coupon($1,$2,$3) as coupon',[ids.student,coupon.reward_id,'CP-2345-6789-AB'])).rows[0].coupon;
+    assert.equal(again.id,coupon.id);assert.equal(again.badge_cost,1);
+    assert.deepEqual((await db.query('select coupon_badge_balance($1) as balance',[ids.student])).rows[0].balance,{total:1,spent:1,available:0});
+    await db.query('select redeem_reward_coupon($1,$2)',[ids.sponsor,coupon.code]);
+    assert.equal((await db.query('select coupon_badge_balance($1) as balance',[ids.student])).rows[0].balance.spent,1);
+    assert.equal((await db.query('select count(*)::int as n from badge_mint_jobs')).rows[0].n,1);
+    await db.exec('set role anon');
+    await rejectsCode(db.query('select coupon_badge_balance($1)',[ids.student]),'42501');
+  }finally{await db.close();}
 });

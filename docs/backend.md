@@ -303,3 +303,21 @@ accepts lowercase or omitted separators and normalizes to the stored format.
 Existing 48-character hex codes remain redeemable; requesting an existing coupon
 returns that original coupon. Codes are not converted or reissued automatically.
 Eligibility, reward ownership, campaign expiry and single-use checks are unchanged.
+
+
+### Spendable badge credits (frontend integration)
+
+Apply `20261128110020_coupon_badge_spending.sql` after the existing migrations.
+Physical cNFTs stay in the collection. Each new coupon consumes `required_badges`
+credits and saves that price in `coupons.badge_cost`. Issuance locks the student
+row before checking confirmed app-issued mints minus all coupon costs; different
+simultaneous reward requests cannot spend the same credit twice. Reissuing the
+same coupon consumes nothing further. A redeemed/expired coupon still counts as
+spent; there is no automatic credit refund. Campaign price edits affect only new
+coupons. Existing coupons are backfilled once using the campaign's current price;
+historical prices were not previously recorded and cannot be reconstructed.
+Already overspent historical balances are shown as zero available; coupons and
+NFTs are retained. `GET /api/coupons` includes `badge_cost` and a `balance` object
+with `total`, `spent` and `available`. Sponsor eligibility also checks this balance
+(or accepts an existing unused coupon). Collection count remains the total NFT
+count. The frontend uses saved costs, including coupons from closed campaigns.

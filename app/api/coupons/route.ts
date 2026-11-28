@@ -6,10 +6,12 @@ export async function GET() {
   try {
     const user = await requireUser("student");
     const { data, error } = await supabase.from("coupons")
-      .select("id, reward_id, code, status, created_at, used_at").eq("user_id", user.id)
+      .select("id, reward_id, code, status, created_at, used_at, badge_cost").eq("user_id", user.id)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    return json({ success: true, coupons: data });
+    const { data: balance, error: balanceError } = await supabase.rpc("coupon_badge_balance", { p_user_id: user.id });
+    if (balanceError) throw balanceError;
+    return json({ success: true, coupons: data, balance });
   } catch (error) { return apiError(error); }
 }
 export async function POST(request: Request) {

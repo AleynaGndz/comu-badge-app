@@ -18,15 +18,18 @@ export async function POST(request: Request) {
       .select("id").eq("wallet_address", address).eq("role", "student").maybeSingle();
     if (userError) throw userError;
     let couponStatus = null;
+    let spentBadges = 0;
     if (student) {
-      const { data: coupon, error: couponError } = await supabase.from("coupons")
-        .select("status").eq("reward_id", rewardId).eq("user_id", student.id).maybeSingle();
+      const { data: coupons, error: couponError } = await supabase.from("coupons")
+        .select("reward_id,status,badge_cost").eq("user_id", student.id);
       if (couponError) throw couponError;
-      couponStatus = coupon?.status ?? null;
+      couponStatus = coupons?.find(c => c.reward_id === rewardId)?.status ?? null;
+      spentBadges = (coupons ?? []).reduce((sum, c) => sum + Number(c.badge_cost), 0);
     }
+    const available = Math.max(0, (count ?? 0) - spentBadges);
     const open = reward.active && (!reward.expires_at || Date.parse(reward.expires_at) > Date.now());
-    return json({ success: true, eligible: Boolean(student && open && (count ?? 0) >= reward.required_badges && couponStatus !== "used"),
-      badgeCount: count ?? 0, required_badges: reward.required_badges, coupon_status: couponStatus,
+    return json({ success: true, eligible: Boolean(student && open && (couponStatus === "unused" || available >= reward.required_badges) && couponStatus !== "used"),
+      badgeCount: available, totalBadgeCount: count ?? 0, spentBadges, required_badges: reward.required_badges, coupon_status: couponStatus,
       basis: "verified_app_issued_badges" });
   } catch (error) { return apiError(error); }
 }

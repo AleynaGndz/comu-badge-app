@@ -236,3 +236,19 @@ test('redeem accepts readable short codes and legacy codes but rejects malformed
   assert.equal((await bad.load('app/api/coupons/redeem/route.ts').POST(post({code:'CP-OOOO-1111-AA'}))).status,400);
   assert.equal(bad.calls.length,1);
 });
+
+
+test('coupon listing includes stored costs and the server credit balance',async()=>{
+  const h=harness([student,{data:[{id:'coupon',badge_cost:2}],error:null},{data:{total:5,spent:2,available:3},error:null}]);
+  const res=await h.load('app/api/coupons/route.ts').GET();assert.equal(res.status,200);
+  const data=await res.json();assert.equal(data.coupons[0].badge_cost,2);assert.equal(data.balance.available,3);
+  assert.equal(h.calls[2].rpc,'coupon_badge_balance');assert.equal(h.calls[2].params.p_user_id,studentId);
+});
+test('sponsor eligibility uses remaining credits and honors already issued unused coupons',async()=>{
+  for(const status of ['unused','used',null]){
+    const h=harness([{data:{...student.data,role:'sponsor'},error:null},{data:{id:eventId,required_badges:2,active:true,expires_at:null},error:null},
+      {count:3,error:null},student,{data:[{reward_id:'other',status:'used',badge_cost:3},...(status?[{reward_id:eventId,status,badge_cost:0}]:[])],error:null}]);
+    const res=await h.load('app/api/rewards/eligibility/route.ts').POST(post({reward_id:eventId,wallet_address:address}));
+    assert.equal(res.status,200);const data=await res.json();assert.equal(data.badgeCount,0);assert.equal(data.eligible,status==='unused');
+  }
+});
