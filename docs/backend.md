@@ -358,8 +358,10 @@ then restart `npm run dev`. Never commit that URL or prefix it with `NEXT_PUBLIC
 Each developer must configure their own local environment; Git does not carry it.
 The shared public Devnet endpoint in `.env.example` is a development fallback,
 not a guarantee against provider throttling. All configured mint/tree settings
-must remain on Devnet. Existing submitted jobs retain their recorded RPC URL;
-keep that endpoint available until those jobs resolve.
+must remain on Devnet. Existing submitted jobs retain their original RPC URL for audit. Processing uses
+the currently configured RPC (with a verified Devnet genesis), falling back to the
+recorded URL only when no current endpoint is configured. Signed transactions,
+signatures, amounts and expiry heights remain unchanged during provider rotation.
 
 The claim page reads `/api/wallet/balance`, not a credential-bearing browser RPC.
 This authenticated, read-only endpoint only accepts the signed-in wallet. It

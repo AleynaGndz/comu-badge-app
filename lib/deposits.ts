@@ -91,7 +91,7 @@ export async function submitDeposit(userId: string, depositId: string, encoded: 
   if (!proposal) throw new ApiError("Unrecognized payment transaction", 400);
   const signer = depositSigner();
   if (row.treasury_address !== signer.publicKey.toBase58()) throw new ApiError("Original custody key is required", 503);
-  const connection = await devnetConnection(row.rpc_url); // Refuse sponsorship outside Devnet before signing.
+  const connection = await devnetConnection(process.env.SOLANA_RPC_URL || row.rpc_url); // Refuse sponsorship outside Devnet before signing.
   if (await connection.getBlockHeight("finalized") > Number(proposal.last_valid_block_height)) {
     throw new ApiError("İmzanın süresi dolmuş. Henüz ödeme gönderilmedi; tekrar deneyin.", 409);
   }
@@ -107,7 +107,7 @@ export async function reconcileDeposit(row: Deposit) {
   if (row.state === "confirmed") return { status: 200, deposit: depositView(row) };
   if (!row.payment_signature || !row.signed_transaction) return { status: 200, deposit: depositView(row) };
   if (row.state === "failed") throw new ApiError("Deposit failed on-chain; no registration was granted", 409);
-  const connection = await devnetConnection(row.rpc_url);
+  const connection = await devnetConnection(process.env.SOLANA_RPC_URL || row.rpc_url);
   let status;
   try { status = await finalizedStatus(connection, row.payment_signature); }
   catch { return { status: 202, deposit: depositView(row) }; }
@@ -152,7 +152,7 @@ export async function processPayout(row: SolPayout) {
     try {
       const signer = depositSigner();
       if (signer.publicKey.toBase58() !== row.treasury_address) throw new ApiError("Original custody key is required", 503);
-      const connection = await devnetConnection(row.rpc_url);
+      const connection = await devnetConnection(process.env.SOLANA_RPC_URL || row.rpc_url);
       const prepared = await prepareSolTransfer(connection, row.treasury_address, row.wallet_address,
         Number(row.lamports), `CampusPass ${row.kind}:${row.id}`);
       const fee = (await connection.getFeeForMessage(prepared.transaction.compileMessage(), "finalized")).value;
@@ -175,7 +175,7 @@ export async function processPayout(row: SolPayout) {
     }
   }
   if (!row.tx_signature || !row.signed_transaction || row.last_valid_block_height == null) throw new ApiError("Incomplete payout record", 409);
-  const connection = await devnetConnection(row.rpc_url);
+  const connection = await devnetConnection(process.env.SOLANA_RPC_URL || row.rpc_url);
   let status;
   try { status = await finalizedStatus(connection, row.tx_signature); }
   catch { return payoutView(row); }
