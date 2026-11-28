@@ -259,3 +259,11 @@ test('retryable RPC errors return a safe 503 and Retry-After instead of a generi
   assert.equal(response.status,503);assert.equal(response.headers.get('retry-after'),'5');
   assert.deepEqual(await response.json(),{success:false,message:'Solana servisi yoğun',retryable:true});
 });
+
+
+test('insufficient coupon credits report the server balance without bypassing atomic issuance',async()=>{
+  const h=harness([student,{error:{code:'PT403',message:'Not enough unspent verified badges'}},{data:{available:1},error:null}]);
+  const res=await h.load('app/api/coupons/route.ts').POST(post({reward_id:eventId}));
+  assert.equal(res.status,403);assert.match((await res.json()).message,/1 rozet/);
+  assert.equal(h.calls[1].rpc,'issue_reward_coupon');assert.equal(h.calls[2].rpc,'coupon_badge_balance');
+});
