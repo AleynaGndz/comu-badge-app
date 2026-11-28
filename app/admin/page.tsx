@@ -21,6 +21,7 @@ import {
   X,
   Coins,
   RefreshCw,
+  Award,
 } from "lucide-react";
 
 const WalletMultiButton = dynamic(
@@ -75,6 +76,10 @@ export default function AdminPage() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [clubs, setClubs] = useState<ClubItem[]>([]);
   const [badgeCatalog, setBadgeCatalog] = useState<CatalogBadge[]>([]);
+
+  // Etkinlik Rozet Düzenleme State'leri
+  const [eventBadgeDrafts, setEventBadgeDrafts] = useState<Record<string, string>>({});
+  const [updatingBadgeEventId, setUpdatingBadgeEventId] = useState<string | null>(null);
 
   // Canlı QR Modal / Ekran State'leri
   const [activeQrEvent, setActiveQrEvent] = useState<EventItem | null>(null);
@@ -138,6 +143,11 @@ export default function AdminPage() {
       const data = await res.json();
       if (data.success && Array.isArray(data.events)) {
         setEvents(data.events);
+        const drafts: Record<string, string> = {};
+        data.events.forEach((ev: EventItem) => {
+          drafts[ev.id] = ev.badge_key || "";
+        });
+        setEventBadgeDrafts(drafts);
       }
     } catch (err) {
       console.error("Etkinlikler yüklenemedi:", err);
@@ -322,6 +332,57 @@ export default function AdminPage() {
     }
   };
 
+  // Mevcut etkinliğin rozetini güncelle (PATCH /api/events)
+  const handleUpdateEventBadge = async (ev: EventItem) => {
+    const newBadgeKey = eventBadgeDrafts[ev.id];
+    if (!newBadgeKey) {
+      setListMessage({ type: "error", text: "Lütfen listeden bir rozet tasarımı seçin." });
+      return;
+    }
+
+    setUpdatingBadgeEventId(ev.id);
+    setListMessage(null);
+
+    try {
+      const res = await fetch("/api/events", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_id: ev.id,
+          badge_key: newBadgeKey,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        const rawMsg = data.message || "";
+        if (
+          rawMsg.toLowerCase().includes("attendance") ||
+          rawMsg.toLowerCase().includes("started") ||
+          rawMsg.toLowerCase().includes("open")
+        ) {
+          throw new Error(
+            `"${ev.title}" etkinliğinin yoklaması başladığı veya tamamlandığı için rozeti değiştirilemez.`
+          );
+        }
+        throw new Error(rawMsg || "Etkinlik rozeti güncellenemedi.");
+      }
+
+      setEvents((prev) =>
+        prev.map((item) => (item.id === ev.id ? { ...item, badge_key: newBadgeKey } : item))
+      );
+      setListMessage({
+        type: "success",
+        text: `"${ev.title}" etkinliğinin rozeti "${newBadgeKey}" olarak güncellendi!`,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Rozet güncellenemedi.";
+      setListMessage({ type: "error", text: msg });
+    } finally {
+      setUpdatingBadgeEventId(null);
+    }
+  };
+
   // Bekleyen depozito ve iadeleri blokzincir ile uzlaştır (POST /api/deposits/reconcile)
   const handleReconcileDeposits = async (ev: EventItem) => {
     setReconcilingEventId(ev.id);
@@ -463,6 +524,10 @@ export default function AdminPage() {
 
       const created: EventItem = data.event;
       setEvents((prev) => [created, ...prev]);
+      setEventBadgeDrafts((prev) => ({
+        ...prev,
+        [created.id]: created.badge_key || selectedBadgeKey || "",
+      }));
       setNewTitle("");
       setNewDescription("");
       setNewDate("");
@@ -709,7 +774,7 @@ export default function AdminPage() {
               Topluluk & Sponsor Yönetim Paneli
             </h1>
             <p className="text-slate-400 mb-8 text-sm">
-              Etkinlik oluşturun, alttaki listeden etkinlik zamanı geldiğinde canlı QR ekranını yansıtın, depozitoları uzlaştırın ve sponsor kuponlarını doğrulayın.
+              Etkinlik oluşturun, mevcut etkinliklerin rozet tasarımlarını düzenleyin, canlı QR ekranını yansıtın ve sponsor kuponlarını doğrulayın.
             </p>
 
             {/* Canlı QR Ekranı Kutusu */}
@@ -883,7 +948,7 @@ export default function AdminPage() {
                       <input
                         type="text"
                         required
-                        placeholder="Örn: CP-7K4M-9X2R-QT"
+                        placeholder="Örn: CPN-9F3A..."
                         value={couponCodeInput}
                         onChange={(e) => setCouponCodeInput(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-emerald-500"
@@ -997,15 +1062,15 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Alt Bölüm: Yönetilen Etkinlikler Listesi, Depozito Uzlaştırma & No-Show Dağıtımı */}
+            {/* Alt Bölüm: Yönetilen Etkinlikler Listesi, Rozet Düzenleme, Depozito Uzlaştırma & No-Show Dağıtımı */}
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
                 <div className="flex items-center gap-2 text-purple-400 font-semibold">
                   <Calendar className="w-5 h-5" />
-                  <h2>Kayıtlı Etkinlikler & Depozito Yönetimi ({events.length})</h2>
+                  <h2>Kayıtlı Etkinlikler, Rozet Atama &amp; Depozito Yönetimi ({events.length})</h2>
                 </div>
                 <span className="text-xs text-slate-400">
-                  Canlı QR açabilir, bekleyen SOL iadelerini onaylayabilir ve gelmeyenlerin payını dağıtabilirsiniz.
+                  Başlamamış etkinliklerin rozet tasarımını değiştirebilir, canlı QR açabilir ve iadeleri yönetebilirsiniz.
                 </span>
               </div>
 
@@ -1023,82 +1088,137 @@ export default function AdminPage() {
 
               {events.length > 0 ? (
                 <div className="divide-y divide-slate-800">
-                  {events.map((ev) => (
-                    <div
-                      key={ev.id}
-                      className="py-4 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-4"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2.5">
-                          <h3 className="font-semibold text-white text-sm">{ev.title}</h3>
-                          {getEventStatusBadge(ev.event_date)}
+                  {events.map((ev) => {
+                    const draftValue = eventBadgeDrafts[ev.id] ?? ev.badge_key ?? "";
+                    const isDirty = draftValue !== (ev.badge_key || "");
+
+                    return (
+                      <div
+                        key={ev.id}
+                        className="py-4 first:pt-0 last:pb-0 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-semibold text-white text-sm">{ev.title}</h3>
+                            {getEventStatusBadge(ev.event_date)}
+                            {ev.badge_key ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                                <Award className="w-3 h-3" />
+                                <span>Rozet: {ev.badge_key}</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                                <Award className="w-3 h-3" />
+                                <span>Rozet Atanmamış</span>
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400">
+                            {new Date(ev.event_date).toLocaleString("tr-TR", {
+                              dateStyle: "long",
+                              timeStyle: "short",
+                            })}
+                            {" • Depozito: 0.5 SOL"}
+                          </p>
                         </div>
-                        <p className="text-xs text-slate-400">
-                          {new Date(ev.event_date).toLocaleString("tr-TR", {
-                            dateStyle: "long",
-                            timeStyle: "short",
-                          })}
-                          {ev.badge_key ? ` • Rozet: ${ev.badge_key}` : ""}
-                          {" • Depozito: 0.5 SOL"}
-                        </p>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Rozet Seçme ve Güncelleme */}
+                          {badgeCatalog.length > 0 && (
+                            <div className="inline-flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-lg p-1">
+                              <select
+                                value={draftValue}
+                                onChange={(e) =>
+                                  setEventBadgeDrafts((prev) => ({
+                                    ...prev,
+                                    [ev.id]: e.target.value,
+                                  }))
+                                }
+                                aria-label={`${ev.title} rozet seçimi`}
+                                className="bg-transparent text-xs text-slate-200 px-2 py-1 focus:outline-none cursor-pointer"
+                              >
+                                <option value="" className="bg-slate-900">
+                                  Rozet Seç...
+                                </option>
+                                {badgeCatalog.map((b) => (
+                                  <option
+                                    key={b.badge_key}
+                                    value={b.badge_key}
+                                    className="bg-slate-900"
+                                  >
+                                    {b.badge_key}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateEventBadge(ev)}
+                                disabled={
+                                  updatingBadgeEventId === ev.id || !draftValue || !isDirty
+                                }
+                                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-semibold px-2.5 py-1 rounded transition cursor-pointer"
+                              >
+                                {updatingBadgeEventId === ev.id ? "..." : "Rozeti Kaydet"}
+                              </button>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenLiveQr(ev)}
+                            className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
+                          >
+                            <QrCode className="w-4 h-4" />
+                            <span>Canlı QR Aç</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleReconcileDeposits(ev)}
+                            disabled={reconcilingEventId === ev.id}
+                            title="Bekleyen depozito ve iade işlemlerini blokzincirde kontrol et"
+                            className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                          >
+                            {reconcilingEventId === ev.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            )}
+                            <span>İadeleri Uzlaştır</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDistributeNoShow(ev)}
+                            disabled={distributingEventId === ev.id}
+                            title="Katılıp gelmeyenlerin 0.5 SOL depozitosunu katılanlara eşit dağıt"
+                            className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                          >
+                            {distributingEventId === ev.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Coins className="w-3.5 h-3.5" />
+                            )}
+                            <span>Gelmeyenlerin Payını Dağıt</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteEvent(ev)}
+                            disabled={deletingEventId === ev.id}
+                            title="Etkinliği Sil"
+                            className="p-2 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50"
+                          >
+                            {deletingEventId === ev.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
                       </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenLiveQr(ev)}
-                          className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
-                        >
-                          <QrCode className="w-4 h-4" />
-                          <span>Canlı QR Aç</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleReconcileDeposits(ev)}
-                          disabled={reconcilingEventId === ev.id}
-                          title="Bekleyen depozito ve iade işlemlerini blokzincirde kontrol et"
-                          className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
-                        >
-                          {reconcilingEventId === ev.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <RefreshCw className="w-3.5 h-3.5" />
-                          )}
-                          <span>İadeleri Uzlaştır</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDistributeNoShow(ev)}
-                          disabled={distributingEventId === ev.id}
-                          title="Katılıp gelmeyenlerin 0.5 SOL depozitosunu katılanlara eşit dağıt"
-                          className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
-                        >
-                          {distributingEventId === ev.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Coins className="w-3.5 h-3.5" />
-                          )}
-                          <span>Gelmeyenlerin Payını Dağıt</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteEvent(ev)}
-                          disabled={deletingEventId === ev.id}
-                          title="Etkinliği Sil"
-                          className="p-2 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50"
-                        >
-                          {deletingEventId === ev.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-4 h-4" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-xs text-slate-500">Henüz kayıtlı etkinlik bulunmuyor.</p>
