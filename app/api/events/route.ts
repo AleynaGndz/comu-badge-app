@@ -56,7 +56,7 @@ async function requireAdmin(): Promise<
 export async function GET(request: Request) {
     try {
         let query = supabase.from("events")
-            .select("id, club_id, title, description, event_date, badge_key")
+            .select("id, club_id, title, description, event_date, badge_key, deposit_lamports")
             .order("event_date", { ascending: true });
         if (new URL(request.url).searchParams.get("managed") === "true") {
             const user = await requireUser("admin");

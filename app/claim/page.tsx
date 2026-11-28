@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, Transaction } from "@solana/web3.js";
 import { Html5Qrcode } from "html5-qrcode";
 import { startScannerSession } from "@/lib/qr-scanner";
 import {
@@ -34,6 +34,7 @@ interface EventDetail {
   title: string;
   description?: string;
   event_date: string;
+  deposit_lamports?: number;
 }
 
 const REQUIRED_STAKE_SOL = 0.5;
@@ -45,7 +46,7 @@ function ClaimContent() {
   const urlToken = searchParams.get("token") || "";
 
   const { connection } = useConnection();
-  const { publicKey } = useWallet();
+  const { publicKey, signTransaction } = useWallet();
   const walletAddress = publicKey ? publicKey.toBase58() : "";
 
   const [solBalance, setSolBalance] = useState<number | null>(null);
@@ -57,6 +58,11 @@ function ClaimContent() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isRegistered, setIsRegistered] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
+  const [depositState, setDepositState] = useState<string | null>(null);
+  const [refundState, setRefundState] = useState<string | null>(null);
+  const [bonusLamports, setBonusLamports] = useState(0);
+  const registrationRequest = useRef(0);
+  const needsDeposit = Number(eventDetail?.deposit_lamports ?? 0) > 0;
 
   const [activeToken, setActiveToken] = useState<string>(urlToken);
   const [showScanner, setShowScanner] = useState(false);
@@ -137,7 +143,7 @@ function ClaimContent() {
     return () => {
       cancelled = true;
     };
-  }, [publicKey, connection]);
+  }, [publicKey, connection, depositState, refundState, bonusLamports]);
 
   // Cüzdan veya etkinlik değiştiğinde tüm claim/sonuç durumlarını sıfırla
   useEffect(() => {
@@ -156,14 +162,18 @@ function ClaimContent() {
     setShowScanner(false);
     setActiveToken(urlToken);
 
+    registrationRequest.current += 1;
+    setRegisterLoading(false);
     if (!walletAddress || !eventId) {
       setIsRegistered(false);
       setIsAuthenticated(false);
       return;
     }
 
-    const storageKey = `comu_rsvp_${walletAddress}_${eventId}`;
-    setIsRegistered(localStorage.getItem(storageKey) === "true");
+    setIsRegistered(false);
+    setDepositState(null);
+    setRefundState(null);
+    setBonusLamports(0);
 
     fetch("/api/auth/me")
       .then((res) => res.json())
@@ -177,6 +187,38 @@ function ClaimContent() {
       .catch(() => setIsAuthenticated(false));
   }, [walletAddress, eventId, urlToken]);
 
+  // Registration and refunds come from the server ledger, never localStorage.
+  useEffect(() => {
+    if (!walletAddress || !eventId || !isAuthenticated) return;
+    let cancelled = false;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const res = await fetch(`/api/rsvp?event=${encodeURIComponent(eventId)}`);
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+        setDepositState(data.deposit?.state ?? null);
+        setIsRegistered(data.deposit?.state === "confirmed");
+        const refund = data.payouts?.find((p: { kind: string }) => p.kind === "refund");
+        setRefundState(refund?.state ?? null);
+        setBonusLamports(data.payouts?.filter((p: { kind: string; state: string }) => p.kind === "bonus" && p.state === "confirmed")
+          .reduce((sum: number, p: { lamports: number }) => sum + Number(p.lamports), 0) ?? 0);
+        if (refund && !["confirmed", "failed", "review_required"].includes(refund.state)) {
+          const result = await fetch("/api/rsvp/refund", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event_id: eventId }) });
+          const update = await result.json();
+          if (!cancelled && result.ok) setRefundState(update.payout?.state ?? refund.state);
+        }
+      } catch { /* Preserve current ledger state on a transient network failure. */ }
+      finally { refreshing = false; }
+    };
+    void refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [walletAddress, eventId, isAuthenticated]);
+
   const eventStartMs = eventDetail?.event_date ? new Date(eventDetail.event_date).getTime() : null;
   const windowOpenMs = eventStartMs !== null ? eventStartMs - 15 * 60 * 1000 : null;
   const windowCloseMs = eventStartMs !== null ? eventStartMs + 2 * 60 * 60 * 1000 : null;
@@ -187,30 +229,37 @@ function ClaimContent() {
 
   const hasEnoughSol = solBalance !== null && solBalance >= REQUIRED_STAKE_SOL;
 
-  // Etkinliğe 0.5 SOL taahhüt ile ön kayıt olma (bakiye kontrolü ile)
+  // The wallet signs the exact server proposal; only the backend broadcasts it.
   const handleRegisterStake = async () => {
-    if (!walletAddress || !eventId) return;
-
-    if (solBalance === null || solBalance < REQUIRED_STAKE_SOL) {
-      setErrorMsg(
-        `Yetersiz Bakiye: Etkinliğe kayıt olmak için cüzdanınızda en az ${REQUIRED_STAKE_SOL} SOL bulunmalıdır (Mevcut bakiye: ${(
-          solBalance ?? 0
-        ).toFixed(4)} SOL).`
-      );
+    if (!walletAddress || !eventId || !signTransaction) {
+      setErrorMsg("İşlem imzalamayı destekleyen öğrenci cüzdanıyla giriş yapın.");
       return;
     }
-
+    const requestId = ++registrationRequest.current;
     setRegisterLoading(true);
     setErrorMsg(null);
-
     try {
-      const storageKey = `comu_rsvp_${walletAddress}_${eventId}`;
-      localStorage.setItem(storageKey, "true");
-      setIsRegistered(true);
-    } catch {
-      setErrorMsg("Kayıt işlemi sırasında bir hata oluştu.");
+      const prepared = await fetch("/api/rsvp", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: eventId }) });
+      const proposal = await prepared.json();
+      if (!prepared.ok) throw new Error(proposal.message || "Depozito işlemi hazırlanamadı.");
+      if (registrationRequest.current !== requestId) return;
+      if (proposal.deposit.state === "confirmed") { setIsRegistered(true); setDepositState("confirmed"); return; }
+      if (!proposal.transaction) { setDepositState(proposal.deposit.state); return; }
+      const transaction = Transaction.from(Uint8Array.from(atob(proposal.transaction), char => char.charCodeAt(0)));
+      const signed = await signTransaction(transaction);
+      if (registrationRequest.current !== requestId) return;
+      const submitted = await fetch("/api/rsvp/confirm", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deposit_id: proposal.deposit.id, signed_transaction: signed.serialize().toString("base64") }) });
+      const result = await submitted.json();
+      if (!submitted.ok) throw new Error(result.message || "Depozito doğrulanamadı.");
+      if (registrationRequest.current !== requestId) return;
+      setDepositState(result.deposit.state);
+      setIsRegistered(result.deposit.state === "confirmed");
+    } catch (error) {
+      if (registrationRequest.current === requestId) setErrorMsg(error instanceof Error ? error.message : "Depozito işlemi tamamlanamadı.");
     } finally {
-      setRegisterLoading(false);
+      if (registrationRequest.current === requestId) setRegisterLoading(false);
     }
   };
 
@@ -294,6 +343,7 @@ function ClaimContent() {
   useEffect(() => {
     if (
       urlToken &&
+      eventDetail && (!needsDeposit || isRegistered) &&
       walletAddress &&
       isAuthenticated === true &&
       !claimed &&
@@ -303,7 +353,7 @@ function ClaimContent() {
     ) {
       submitClaim(urlToken, false);
     }
-  }, [urlToken, walletAddress, isAuthenticated, claimed, claiming, processingChain, errorMsg, submitClaim]);
+  }, [urlToken, walletAddress, isAuthenticated, claimed, claiming, processingChain, errorMsg, submitClaim, eventDetail, needsDeposit, isRegistered]);
 
   useEffect(() => {
     if (!showScanner) return;
@@ -415,6 +465,12 @@ function ClaimContent() {
         </span>
         <h1 className="text-2xl font-bold mt-1 mb-2">{displayTitle}</h1>
 
+        {needsDeposit && refundState && (
+          <p className="text-xs text-emerald-300 mb-3">
+            {refundState === "confirmed" ? "0.5 Devnet SOL iadeniz tamamlandı." : `Depozito iade durumu: ${refundState}`}
+          </p>
+        )}
+        {bonusLamports > 0 && <p className="text-xs text-emerald-300 mb-3">Katılmayanlardan payınız: {bonusLamports / LAMPORTS_PER_SOL} Devnet SOL</p>}
         {eventDetail?.event_date && (
           <p className="text-xs text-purple-300/90 mb-3">
             Etkinlik Zamanı:{" "}
@@ -426,15 +482,15 @@ function ClaimContent() {
         )}
 
         <p className="text-slate-400 text-sm mb-6">
-          Etkinliğe 0.5 SOL taahhüt ile kaydol, etkinlik günü QR kodu okutup hem 0.5 SOL iadeni hem de rozetini al.
+          {needsDeposit ? "0.5 Devnet SOL depozito ile kaydol. Katılımın QR ile doğrulandığında iaden başlatılır; rozet ayrıca hazırlanır." : "Bu etkinlik depozitosuzdur. Katılımını QR ile doğrulayıp rozetini alabilirsin."}
         </p>
 
         {/* Stake-to-Attend Bilgi Kutusu */}
-        <div className="mb-6 p-4 bg-slate-950/70 border border-slate-800 rounded-xl text-left space-y-2 text-xs text-slate-300">
+        {needsDeposit && <div className="mb-6 p-4 bg-slate-950/70 border border-slate-800 rounded-xl text-left space-y-2 text-xs text-slate-300">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-purple-300 font-semibold">
               <Coins className="w-4 h-4 shrink-0" />
-              <span>0.5 SOL Katılım Taahhüdü</span>
+              <span>0.5 Devnet SOL Depozito</span>
             </div>
             {publicKey && (
               <span
@@ -451,15 +507,15 @@ function ClaimContent() {
             )}
           </div>
           <p className="text-slate-400">
-            Etkinliğe katılıp QR okuttuğunda <strong>0.5 SOL</strong> cüzdanına iade edilir ve cNFT rozetini kazanırsın.
+            QR katılımı doğrulandığında <strong>0.5 Devnet SOL</strong> iaden başlatılır. İşlem kesinleşince tamamlandığı gösterilir.
           </p>
           <div className="flex items-start gap-2 text-emerald-300/90 pt-1">
             <Users className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
-              Kayıt olup gelmeyenlerin iade edilmeyen SOL&apos;leri, etkinliğe katılanlar arasında <strong>eşit olarak paylaştırılır</strong>.
+              Kayıt olup gelmeyenlerin iade edilmeyen SOL&apos;leri, ücretli kaydı ve QR katılımı doğrulananlar arasında <strong>eşit olarak paylaştırılır</strong>. Dağıtımı etkinlikten iki saat sonra kulüp yöneticisi başlatır.
             </span>
           </div>
-        </div>
+        </div>}
 
         {!publicKey ? (
           <div className="flex flex-col items-center gap-3">
@@ -552,7 +608,7 @@ function ClaimContent() {
               </div>
             )}
 
-            {!isRegistered ? (
+            {needsDeposit && !isRegistered ? (
               <div className="space-y-2">
                 {!balanceLoading && !hasEnoughSol && (
                   <div className="p-3 bg-amber-950/50 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-center gap-1.5">
@@ -565,7 +621,7 @@ function ClaimContent() {
 
                 <button
                   onClick={handleRegisterStake}
-                  disabled={registerLoading || balanceLoading || !hasEnoughSol || isAfterWindow}
+                  disabled={registerLoading || balanceLoading || !hasEnoughSol || isAfterWindow || depositState === "submitted" || depositState === "review_required"}
                   className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
                 >
                   {registerLoading || balanceLoading ? (
@@ -576,7 +632,7 @@ function ClaimContent() {
                   ) : (
                     <>
                       <Coins className="w-5 h-5" />
-                      <span>Katılacağım (0.5 SOL Taahhüt Et)</span>
+                      <span>{depositState === "submitted" ? "Depozito Onayı Bekleniyor..." : "Katılacağım (0.5 Devnet SOL Gönder)"}</span>
                     </>
                   )}
                 </button>
@@ -585,7 +641,7 @@ function ClaimContent() {
               <div className="space-y-4">
                 <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-center justify-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Etkinliğe kayıtlısın (0.5 SOL taahhüt edildi)</span>
+                  <span>{needsDeposit ? "Kaydın doğrulandı (0.5 Devnet SOL depozito alındı)" : "Bu etkinlik için depozito gerekmiyor"}</span>
                 </div>
 
                 {isBeforeWindow && windowOpenMs !== null ? (
@@ -661,7 +717,7 @@ function ClaimContent() {
                     ) : (
                       <>
                         <Camera className="w-5 h-5" />
-                        <span>Rozetimi Al & 0.5 SOL İade Et (QR Okut)</span>
+                        <span>{needsDeposit ? "QR Okut, İadeyi Başlat ve Rozetimi Al" : "Rozetimi Al (QR Okut)"}</span>
                       </>
                     )}
                   </button>

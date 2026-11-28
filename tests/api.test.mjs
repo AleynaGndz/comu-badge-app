@@ -35,7 +35,7 @@ function harness(results = [], session = { userId: studentId, walletAddress: add
   }, { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
   const clubs = loadTs('lib/clubs.ts', { 'server-only': {}, '@/lib/api': api, '@/lib/supabase': { supabase } });
   const load = (file, mocks = {}) => loadTs(file, { 'server-only': {}, '@/lib/api': api,
-    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, ...mocks },
+    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, '@/lib/deposits': {}, ...mocks },
     { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
   return { load, api, calls, errors };
 }
@@ -88,7 +88,7 @@ test('claim preserves 202 processing status rather than announcing success', asy
   const response = await route.POST(post({ event_id: eventId }));
   assert.equal(response.status, 202);
   assert.equal(response.headers.get('retry-after'), '3');
-  assert.deepEqual(await response.json(), { success: false, processing: true });
+  assert.deepEqual(await response.json(), { success: false, processing: true, refund: null });
   const insert = h.calls.find(call => call.table === 'badge_mint_jobs' && call.operations[0][0] === 'upsert');
   assert.equal(insert.operations[0][1].wallet_address, address);
 });
@@ -200,4 +200,17 @@ test('managed event listing filters by all administrator memberships', async () 
   const filter = h.calls[0].operations.find(op => op[0] === 'in');
   assert.equal(filter[1], 'club_id');
   assert.equal(filter[2][0], eventId);
+});
+
+
+test('deposit and distribution endpoints enforce authentication and roles before money operations', async () => {
+  for (const file of ['app/api/rsvp/route.ts', 'app/api/rsvp/confirm/route.ts', 'app/api/rsvp/refund/route.ts', 'app/api/events/distribute/route.ts', 'app/api/deposits/reconcile/route.ts']) {
+    const noSession = harness([], null);
+    assert.equal((await noSession.load(file).POST(post({ event_id: eventId }))).status, 401, file);
+    assert.equal(noSession.calls.length, 0);
+    const role = file.includes('distribute') || file.includes('reconcile') ? 'student' : 'sponsor';
+    const wrong = harness([{ data: { ...student.data, role }, error: null }]);
+    assert.equal((await wrong.load(file).POST(post({ event_id: eventId }))).status, 403, file);
+    assert.equal(wrong.calls.length, 1);
+  }
 });
