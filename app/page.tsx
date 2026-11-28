@@ -77,6 +77,10 @@ const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
     title: "Android Geliştirme Atölyesi",
     desc: "Mobil Teknoloji Eğitim Rozeti",
   },
+  muhendislergunu: {
+    title: "Mühendisler Günü",
+    desc: "ÇOMÜ Mühendislik Topluluğu Rozeti"
+  }
 };
 
 function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
@@ -91,12 +95,16 @@ function IpfsBadgeImage({ uri, alt }: { uri: string; alt: string }) {
   }
 
   return (
-    <img
-      src={`/api/badge-image?uri=${encodeURIComponent(uri)}`}
-      alt={alt}
-      onError={() => setFailed(true)}
-      className="w-28 h-28 object-contain rounded-xl mb-3 bg-slate-950 p-2"
-    />
+    <div className="w-28 h-28 flex items-center justify-center mb-3 overflow-hidden">
+      <img
+        src={`/api/badge-image?uri=${encodeURIComponent(uri)}`}
+        alt={alt}
+        onError={() => setFailed(true)}
+        className={`w-full h-full object-contain mix-blend-lighten ${
+          alt.includes("Dev3pack") ? "scale-125" : "scale-100"
+        }`}
+      />
+    </div>
   );
 }
 
@@ -342,11 +350,22 @@ export default function Home() {
     <main className="min-h-screen bg-slate-950 text-white p-8">
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
-          <h1 className="text-xl font-bold text-purple-400">ÇOMÜ Badge</h1>
-          <Link href="/admin" className="text-sm text-slate-400 hover:text-white transition">
-            Yönetim & QR
-          </Link>
-        </div>
+            <Link
+              href="/"
+              className="text-xl font-bold text-purple-400 hover:text-purple-300 transition"
+            >
+              ÇOMÜ Badge
+            </Link>
+
+            {(userProfile?.role === "admin" || userProfile?.role === "sponsor") && (
+              <Link
+                href="/admin"
+                className="text-xs text-slate-300 hover:text-purple-400 transition"
+              >
+                Yönetim &amp; QR
+              </Link>
+            )}
+          </div>
         <WalletMultiButton />
       </nav>
 

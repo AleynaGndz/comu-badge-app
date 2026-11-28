@@ -37,7 +37,22 @@ interface EventDetail {
   deposit_lamports?: number;
 }
 
-const REQUIRED_STAKE_SOL = 0.5;
+interface DepositRecord {
+  id: string;
+  event_id: string;
+  state: string;
+  lamports: number;
+  treasury_address: string;
+  payment_signature: string | null;
+}
+
+interface SolPayoutRecord {
+  id: string;
+  kind: "refund" | "bonus" | string;
+  state: string;
+  lamports: number;
+  tx_signature: string | null;
+}
 
 function ClaimContent() {
   const searchParams = useSearchParams();
@@ -56,13 +71,12 @@ function ClaimContent() {
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [isRegistered, setIsRegistered] = useState(false);
-  const [registerLoading, setRegisterLoading] = useState(false);
-  const [depositState, setDepositState] = useState<string | null>(null);
-  const [refundState, setRefundState] = useState<string | null>(null);
-  const [bonusLamports, setBonusLamports] = useState(0);
-  const registrationRequest = useRef(0);
-  const needsDeposit = Number(eventDetail?.deposit_lamports ?? 0) > 0;
+
+  // Gerçek depozito & ödeme durumları
+  const [deposit, setDeposit] = useState<DepositRecord | null>(null);
+  const [payouts, setPayouts] = useState<SolPayoutRecord[]>([]);
+  const [rsvpLoading, setRsvpLoading] = useState(false);
+  const [rsvpProcessing, setRsvpProcessing] = useState(false);
 
   const [activeToken, setActiveToken] = useState<string>(urlToken);
   const [showScanner, setShowScanner] = useState(false);
@@ -79,15 +93,16 @@ function ClaimContent() {
 
   const isProcessingQrRef = useRef(false);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rsvpPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
+  const paymentRequestRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-      }
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      if (rsvpPollRef.current) clearTimeout(rsvpPollRef.current);
     };
   }, []);
 
@@ -112,44 +127,78 @@ function ClaimContent() {
       .catch(() => {});
   }, [eventId]);
 
-  // Cüzdanın Solana Devnet bakiyesini çek
-  useEffect(() => {
+  const refreshBalance = useCallback(() => {
     if (!publicKey) {
       setSolBalance(null);
       return;
     }
-
-    let cancelled = false;
     setBalanceLoading(true);
-
     connection
       .getBalance(publicKey)
       .then((lamports) => {
-        if (!cancelled) {
-          setSolBalance(lamports / LAMPORTS_PER_SOL);
-        }
+        if (isMountedRef.current) setSolBalance(lamports / LAMPORTS_PER_SOL);
       })
       .catch(() => {
-        if (!cancelled) {
-          setSolBalance(0);
-        }
+        if (isMountedRef.current) setSolBalance(0);
       })
       .finally(() => {
-        if (!cancelled) {
-          setBalanceLoading(false);
-        }
+        if (isMountedRef.current) setBalanceLoading(false);
       });
+  }, [publicKey, connection]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [publicKey, connection, depositState, refundState, bonusLamports]);
-
-  // Cüzdan veya etkinlik değiştiğinde tüm claim/sonuç durumlarını sıfırla
   useEffect(() => {
+    refreshBalance();
+  }, [refreshBalance]);
+
+  // Sunucudan depozito ve iade/bonus durumunu çek
+  const fetchRsvpStatus = useCallback(async () => {
+    if (!eventId || !walletAddress) return;
+    const requestId = paymentRequestRef.current;
+    if (rsvpPollRef.current) {
+      clearTimeout(rsvpPollRef.current);
+      rsvpPollRef.current = null;
+    }
+
+    try {
+      const res = await fetch(`/api/rsvp?event=${encodeURIComponent(eventId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!isMountedRef.current || paymentRequestRef.current !== requestId) return;
+
+      if (data.deposit !== undefined) setDeposit(data.deposit);
+      if (Array.isArray(data.payouts)) setPayouts(data.payouts);
+
+      const pendingRefund = data.payouts?.find((p: SolPayoutRecord) => p.kind === "refund" && ["pending", "preparing", "prepared", "submitted"].includes(p.state));
+      if (pendingRefund) {
+        await fetch("/api/rsvp/refund", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event_id: eventId }) });
+        if (!isMountedRef.current || paymentRequestRef.current !== requestId) return;
+      }
+      if (res.status === 202 || data.processing || pendingRefund) {
+        setRsvpProcessing(res.status === 202 || !!data.processing);
+        const retrySec = Number(res.headers.get("Retry-After")) || 3;
+        rsvpPollRef.current = setTimeout(() => {
+          if (isMountedRef.current && paymentRequestRef.current === requestId) fetchRsvpStatus();
+        }, retrySec * 1000);
+      } else {
+        setRsvpProcessing(false);
+        if (data.deposit?.state === "confirmed") {
+          refreshBalance();
+        }
+      }
+    } catch {
+      if (isMountedRef.current) setRsvpProcessing(false);
+    }
+  }, [eventId, walletAddress, refreshBalance]);
+
+  useEffect(() => {
+    paymentRequestRef.current++;
+    setRsvpLoading(false);
     if (pollTimeoutRef.current) {
       clearTimeout(pollTimeoutRef.current);
       pollTimeoutRef.current = null;
+    }
+    if (rsvpPollRef.current) {
+      clearTimeout(rsvpPollRef.current);
+      rsvpPollRef.current = null;
     }
 
     setClaiming(false);
@@ -161,63 +210,27 @@ function ClaimContent() {
     setCanRetryFailed(false);
     setShowScanner(false);
     setActiveToken(urlToken);
+    setDeposit(null);
+    setPayouts([]);
+    setRsvpProcessing(false);
 
-    registrationRequest.current += 1;
-    setRegisterLoading(false);
     if (!walletAddress || !eventId) {
-      setIsRegistered(false);
       setIsAuthenticated(false);
       return;
     }
-
-    setIsRegistered(false);
-    setDepositState(null);
-    setRefundState(null);
-    setBonusLamports(0);
 
     fetch("/api/auth/me")
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.user?.wallet_address === walletAddress) {
           setIsAuthenticated(true);
+          fetchRsvpStatus();
         } else {
           setIsAuthenticated(false);
         }
       })
       .catch(() => setIsAuthenticated(false));
-  }, [walletAddress, eventId, urlToken]);
-
-  // Registration and refunds come from the server ledger, never localStorage.
-  useEffect(() => {
-    if (!walletAddress || !eventId || !isAuthenticated) return;
-    let cancelled = false;
-    let refreshing = false;
-    const refresh = async () => {
-      if (refreshing) return;
-      refreshing = true;
-      try {
-        const res = await fetch(`/api/rsvp?event=${encodeURIComponent(eventId)}`);
-        const data = await res.json();
-        if (cancelled || !res.ok) return;
-        setDepositState(data.deposit?.state ?? null);
-        setIsRegistered(data.deposit?.state === "confirmed");
-        const refund = data.payouts?.find((p: { kind: string }) => p.kind === "refund");
-        setRefundState(refund?.state ?? null);
-        setBonusLamports(data.payouts?.filter((p: { kind: string; state: string }) => p.kind === "bonus" && p.state === "confirmed")
-          .reduce((sum: number, p: { lamports: number }) => sum + Number(p.lamports), 0) ?? 0);
-        if (refund && !["confirmed", "failed", "review_required"].includes(refund.state)) {
-          const result = await fetch("/api/rsvp/refund", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ event_id: eventId }) });
-          const update = await result.json();
-          if (!cancelled && result.ok) setRefundState(update.payout?.state ?? refund.state);
-        }
-      } catch { /* Preserve current ledger state on a transient network failure. */ }
-      finally { refreshing = false; }
-    };
-    void refresh();
-    const timer = setInterval(refresh, 5000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [walletAddress, eventId, isAuthenticated]);
+  }, [walletAddress, eventId, urlToken, fetchRsvpStatus]);
 
   const eventStartMs = eventDetail?.event_date ? new Date(eventDetail.event_date).getTime() : null;
   const windowOpenMs = eventStartMs !== null ? eventStartMs - 15 * 60 * 1000 : null;
@@ -227,39 +240,97 @@ function ClaimContent() {
   const isAfterWindow = windowCloseMs !== null && nowTs > windowCloseMs;
   const isAttendanceOpen = !isBeforeWindow && !isAfterWindow;
 
-  const hasEnoughSol = solBalance !== null && solBalance >= REQUIRED_STAKE_SOL;
+  const requiredSol = eventDetail?.deposit_lamports
+    ? eventDetail.deposit_lamports / LAMPORTS_PER_SOL
+    : 0.5;
+  const hasEnoughSol = solBalance !== null && solBalance >= requiredSol;
+  const needsDeposit = Number(eventDetail?.deposit_lamports ?? 0) > 0;
+  const isDepositConfirmed = !!eventDetail && (!needsDeposit || deposit?.state === "confirmed");
 
-  // The wallet signs the exact server proposal; only the backend broadcasts it.
+  const refundPayout = payouts.find((p) => p.kind === "refund");
+  const bonusPayout = payouts.find((p) => p.kind === "bonus");
+
+  // Gerçek 0.5 SOL depozito ödeme akışı (Phantom imzası + /api/rsvp/confirm)
   const handleRegisterStake = async () => {
-    if (!walletAddress || !eventId || !signTransaction) {
-      setErrorMsg("İşlem imzalamayı destekleyen öğrenci cüzdanıyla giriş yapın.");
+    if (!walletAddress || !eventId) return;
+    if (!signTransaction) {
+      setErrorMsg("Cüzdanınız işlem imzalamayı desteklemiyor.");
       return;
     }
-    const requestId = ++registrationRequest.current;
-    setRegisterLoading(true);
+
+    const requestId = ++paymentRequestRef.current;
+    setRsvpLoading(true);
     setErrorMsg(null);
+
     try {
-      const prepared = await fetch("/api/rsvp", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: eventId }) });
-      const proposal = await prepared.json();
-      if (!prepared.ok) throw new Error(proposal.message || "Depozito işlemi hazırlanamadı.");
-      if (registrationRequest.current !== requestId) return;
-      if (proposal.deposit.state === "confirmed") { setIsRegistered(true); setDepositState("confirmed"); return; }
-      if (!proposal.transaction) { setDepositState(proposal.deposit.state); return; }
-      const transaction = Transaction.from(Uint8Array.from(atob(proposal.transaction), char => char.charCodeAt(0)));
-      const signed = await signTransaction(transaction);
-      if (registrationRequest.current !== requestId) return;
-      const submitted = await fetch("/api/rsvp/confirm", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deposit_id: proposal.deposit.id, signed_transaction: signed.serialize({ requireAllSignatures: false }).toString("base64") }) });
-      const result = await submitted.json();
-      if (!submitted.ok) throw new Error(result.message || "Depozito doğrulanamadı.");
-      if (registrationRequest.current !== requestId) return;
-      setDepositState(result.deposit.state);
-      setIsRegistered(result.deposit.state === "confirmed");
-    } catch (error) {
-      if (registrationRequest.current === requestId) setErrorMsg(error instanceof Error ? error.message : "Depozito işlemi tamamlanamadı.");
+      // 1. Sunucudan depozito niyeti ve hazır SOL transfer işlemini al
+      const prepRes = await fetch("/api/rsvp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: eventId }),
+      });
+      const prepData = await prepRes.json().catch(() => ({}));
+
+      if (!prepRes.ok || !prepData.success) {
+        throw new Error(prepData.message || "Depozito işlemi hazırlanamadı.");
+      }
+
+      if (paymentRequestRef.current !== requestId) return;
+      if (prepData.deposit) {
+        setDeposit(prepData.deposit);
+      }
+
+      // Zaten onaylıysa işlemi bitir
+      if (prepData.deposit?.state === "confirmed") {
+        await fetchRsvpStatus();
+        return;
+      }
+
+      if (!prepData.transaction) {
+        await fetchRsvpStatus();
+        return;
+      }
+
+      // 2. Base64 işlemi çöz ve Phantom ile imzala
+      const rawBytes = Uint8Array.from(atob(prepData.transaction), (c) => c.charCodeAt(0));
+      const tx = Transaction.from(rawBytes);
+      const signedTx = await signTransaction(tx);
+      if (paymentRequestRef.current !== requestId) return;
+      const signedBase64 = signedTx.serialize({ requireAllSignatures: false }).toString("base64");
+
+      // 3. İmzalı işlemi sunucuya gönder ve onayla
+      const confirmRes = await fetch("/api/rsvp/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deposit_id: prepData.deposit.id,
+          signed_transaction: signedBase64,
+        }),
+      });
+      const confirmData = await confirmRes.json().catch(() => ({}));
+      if (paymentRequestRef.current !== requestId) return;
+
+      if (!confirmRes.ok && confirmRes.status !== 202) {
+        throw new Error(confirmData.message || "Depozito ödemesi doğrulanamadı.");
+      }
+
+      if (confirmData.deposit) {
+        setDeposit(confirmData.deposit);
+      }
+
+      if (confirmRes.status === 202 || confirmData.processing) {
+        setRsvpProcessing(true);
+        rsvpPollRef.current = setTimeout(() => {
+          if (isMountedRef.current) fetchRsvpStatus();
+        }, 3000);
+      } else {
+        refreshBalance();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Ödeme işlemi tamamlanamadı.";
+      setErrorMsg(msg);
     } finally {
-      if (registrationRequest.current === requestId) setRegisterLoading(false);
+      if (isMountedRef.current && paymentRequestRef.current === requestId) setRsvpLoading(false);
     }
   };
 
@@ -313,6 +384,9 @@ function ClaimContent() {
           setTxSignature(data.txSignature || null);
           setAssetId(data.assetId || null);
           setClaimed(true);
+          // İade ve bakiye durumunu güncelle
+          fetchRsvpStatus();
+          refreshBalance();
           return;
         }
 
@@ -337,15 +411,15 @@ function ClaimContent() {
         setErrorMsg(message);
       }
     },
-    [walletAddress, eventId]
+    [walletAddress, eventId, fetchRsvpStatus, refreshBalance]
   );
 
   useEffect(() => {
     if (
       urlToken &&
-      eventDetail && (!needsDeposit || isRegistered) &&
       walletAddress &&
       isAuthenticated === true &&
+      isDepositConfirmed &&
       !claimed &&
       !claiming &&
       !processingChain &&
@@ -353,7 +427,17 @@ function ClaimContent() {
     ) {
       submitClaim(urlToken, false);
     }
-  }, [urlToken, walletAddress, isAuthenticated, claimed, claiming, processingChain, errorMsg, submitClaim, eventDetail, needsDeposit, isRegistered]);
+  }, [
+    urlToken,
+    walletAddress,
+    isAuthenticated,
+    isDepositConfirmed,
+    claimed,
+    claiming,
+    processingChain,
+    errorMsg,
+    submitClaim,
+  ]);
 
   useEffect(() => {
     if (!showScanner) return;
@@ -446,12 +530,6 @@ function ClaimContent() {
         </span>
         <h1 className="text-2xl font-bold mt-1 mb-2">{displayTitle}</h1>
 
-        {needsDeposit && refundState && (
-          <p className="text-xs text-emerald-300 mb-3">
-            {refundState === "confirmed" ? "0.5 Devnet SOL iadeniz tamamlandı." : `Depozito iade durumu: ${refundState}`}
-          </p>
-        )}
-        {bonusLamports > 0 && <p className="text-xs text-emerald-300 mb-3">Katılmayanlardan payınız: {bonusLamports / LAMPORTS_PER_SOL} Devnet SOL</p>}
         {eventDetail?.event_date && (
           <p className="text-xs text-purple-300/90 mb-3">
             Etkinlik Zamanı:{" "}
@@ -463,7 +541,7 @@ function ClaimContent() {
         )}
 
         <p className="text-slate-400 text-sm mb-6">
-          {needsDeposit ? "0.5 Devnet SOL depozito ile kaydol. Katılımın QR ile doğrulandığında iaden başlatılır; rozet ayrıca hazırlanır." : "Bu etkinlik depozitosuzdur. Katılımını QR ile doğrulayıp rozetini alabilirsin."}
+          {needsDeposit ? `Etkinliğe ${requiredSol} SOL depozito ile kaydol. QR katılımı doğrulandığında tam iaden başlatılır ve rozetin hazırlanır.` : "Bu etkinlik depozitosuzdur. QR ile katılımını doğrulayıp rozetini alabilirsin."}
         </p>
 
         {/* Stake-to-Attend Bilgi Kutusu */}
@@ -471,32 +549,64 @@ function ClaimContent() {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-purple-300 font-semibold">
               <Coins className="w-4 h-4 shrink-0" />
-              <span>0.5 Devnet SOL Depozito</span>
+              <span>{requiredSol} SOL Katılım Depozitosu</span>
             </div>
             {publicKey && (
               <span
                 className={`text-[11px] font-mono px-2 py-0.5 rounded ${
-                  hasEnoughSol
+                  hasEnoughSol || isDepositConfirmed
                     ? "bg-emerald-500/15 text-emerald-300"
                     : "bg-red-500/15 text-red-300"
                 }`}
               >
                 {balanceLoading
                   ? "Bakiye ölçülüyor..."
-                  : `Bakiye: ${(solBalance ?? 0).toFixed(3)} SOL`}
+                  : `Bakiye: ${(solBalance ?? 0).toFixed(4)} SOL`}
               </span>
             )}
           </div>
           <p className="text-slate-400">
-            QR katılımı doğrulandığında <strong>0.5 Devnet SOL</strong> iaden başlatılır. Gönderim, iade ve dağıtım ağ ücretlerini biz karşılıyoruz; senden yalnızca depozito çıkar.
+            Etkinliğe katılıp QR okuttuğunda <strong>{requiredSol} SOL</strong> cüzdanına iade edilir ve cNFT rozetini kazanırsın.
           </p>
           <div className="flex items-start gap-2 text-emerald-300/90 pt-1">
             <Users className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
-              Kayıt olup gelmeyenlerin iade edilmeyen SOL&apos;leri, ücretli kaydı ve QR katılımı doğrulananlar arasında <strong>eşit olarak paylaştırılır</strong>. Dağıtımı etkinlikten iki saat sonra kulüp yöneticisi başlatır.
+              Kayıt olup gelmeyenlerin depozitoları, etkinliğe katılanlar arasında <strong>eşit olarak paylaştırılır</strong>.
             </span>
           </div>
+          <p className="text-[11px] text-slate-500 pt-1">
+            Gönderim, iade ve dağıtım ağ ücretlerini proje cüzdanı karşılar; öğrenciden yalnızca depozito çıkar.
+          </p>
         </div>}
+
+        {/* Kazanılan Ek No-Show Payı Kartı (Varsa) */}
+        {bonusPayout && (
+          <div className="mb-5 p-4 bg-amber-950/40 border border-amber-500/40 rounded-xl text-left space-y-1.5 text-xs">
+            <div className="flex items-center justify-between text-amber-300 font-semibold">
+              <span>🎉 Gelmeyenlerin Havuzundan Ek Kazanç</span>
+              <span className="font-mono">
+                +{(bonusPayout.lamports / LAMPORTS_PER_SOL).toFixed(4)} SOL
+              </span>
+            </div>
+            <p className="text-amber-200/80">
+              Durum:{" "}
+              <strong>
+                {bonusPayout.state === "confirmed" ? "Cüzdanına Aktarıldı" : "Blokzincir Onayı Bekliyor"}
+              </strong>
+            </p>
+            {bonusPayout.tx_signature && (
+              <a
+                href={`https://explorer.solana.com/tx/${bonusPayout.tx_signature}?cluster=devnet`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-amber-300 underline hover:text-amber-200"
+              >
+                <span>Ek Kazanç İşlemini Explorer&apos;da Gör</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        )}
 
         {!publicKey ? (
           <div className="flex flex-col items-center gap-3">
@@ -506,7 +616,7 @@ function ClaimContent() {
         ) : isAuthenticated === false ? (
           <div className="p-4 bg-amber-950/50 border border-amber-500/40 rounded-xl space-y-3 text-xs text-amber-200">
             <p>
-              Rozet alabilmek için önce ana sayfada cüzdanını imzalayarak Web3 oturumu açmalısın.
+              Depozito yatırmak ve rozet alabilmek için önce ana sayfada cüzdanını imzalayarak Web3 oturumu açmalısın.
             </p>
             <Link
               href="/"
@@ -517,14 +627,37 @@ function ClaimContent() {
           </div>
         ) : claimed ? (
           <div className="space-y-4">
-            <div className="p-5 bg-green-950/60 border border-green-500/40 rounded-xl space-y-2">
+            <div className="p-5 bg-green-950/60 border border-green-500/40 rounded-xl space-y-2.5">
               <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto" />
               <h2 className="font-bold text-green-400 text-base">
                 Katılım Onaylandı & cNFT Rozet Kazanıldı!
               </h2>
               <p className="text-xs text-slate-300">
-                cNFT rozetin Solana Devnet üzerinde basıldı ve koleksiyonuna eklendi.
+                {needsDeposit ? `cNFT rozetin Solana Devnet üzerinde basıldı ve ${requiredSol} SOL depozito iade sürecin başlatıldı.` : "cNFT rozetin Solana Devnet üzerinde basıldı."}
               </p>
+
+              {refundPayout && (
+                <div className="p-2.5 bg-slate-950/60 border border-emerald-500/30 rounded-lg text-xs text-emerald-300 space-y-1">
+                  <div>
+                    Depozito İadesi ({(refundPayout.lamports / LAMPORTS_PER_SOL).toFixed(2)} SOL):{" "}
+                    <strong>
+                      {refundPayout.state === "confirmed" ? "Cüzdanına İade Edildi" : "Onaylanıyor..."}
+                    </strong>
+                  </div>
+                  {refundPayout.tx_signature && (
+                    <a
+                      href={`https://explorer.solana.com/tx/${refundPayout.tx_signature}?cluster=devnet`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-emerald-300 underline hover:text-emerald-200"
+                    >
+                      <span>İade İşlemini Explorer&apos;da Gör</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+              )}
+
               {assetId && (
                 <p className="text-[11px] font-mono text-green-300/80 break-all">
                   Asset ID: {assetId}
@@ -548,7 +681,7 @@ function ClaimContent() {
                   rel="noreferrer"
                   className="inline-flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 text-xs font-semibold py-3 px-4 rounded-xl transition"
                 >
-                  <span>Solana Explorer&apos;da Doğrula</span>
+                  <span>cNFT İşlemini Doğrula</span>
                   <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                 </a>
               )}
@@ -589,40 +722,72 @@ function ClaimContent() {
               </div>
             )}
 
-            {needsDeposit && !isRegistered ? (
-              <div className="space-y-2">
-                {!balanceLoading && !hasEnoughSol && (
+            {!isDepositConfirmed ? (
+              <div className="space-y-3">
+                {rsvpProcessing && (
+                  <div className="p-3 bg-blue-950/50 border border-blue-500/40 rounded-xl text-xs text-blue-200 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
+                    <span>0.5 SOL depozito ödemen Solana Devnet üzerinde kesinleşiyor...</span>
+                  </div>
+                )}
+
+                {!balanceLoading && !hasEnoughSol && !rsvpProcessing && (
                   <div className="p-3 bg-amber-950/50 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-center gap-1.5">
                     <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
                     <span>
-                      Kayıt için cüzdanınızda en az <strong>0.5 SOL</strong> (Devnet) bulunmalıdır.
+                      Kayıt için cüzdanınızda en az <strong>{requiredSol} SOL</strong> bulunmalıdır. Ağ ücretini proje karşılar.
                     </span>
                   </div>
                 )}
 
                 <button
                   onClick={handleRegisterStake}
-                  disabled={registerLoading || balanceLoading || !hasEnoughSol || isAfterWindow || depositState === "submitted" || depositState === "review_required"}
+                  disabled={
+                    rsvpLoading ||
+                    rsvpProcessing ||
+                    balanceLoading ||
+                    !hasEnoughSol ||
+                    isAfterWindow
+                  }
                   className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
                 >
-                  {registerLoading || balanceLoading ? (
+                  {rsvpLoading || rsvpProcessing || balanceLoading ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>{balanceLoading ? "Bakiye Kontrol Ediliyor..." : "Kayıt Yapılıyor..."}</span>
+                      <span>
+                        {balanceLoading
+                          ? "Bakiye Kontrol Ediliyor..."
+                          : rsvpProcessing
+                          ? "Blokzincir Onayı Bekleniyor..."
+                          : "Phantom Onayı Bekleniyor..."}
+                      </span>
                     </>
                   ) : (
                     <>
                       <Coins className="w-5 h-5" />
-                      <span>{depositState === "submitted" ? "Depozito Onayı Bekleniyor..." : "Katılacağım (0.5 Devnet SOL Gönder)"}</span>
+                      <span>Katılacağım ({requiredSol} SOL Depozito Yatır)</span>
                     </>
                   )}
                 </button>
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-center justify-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{needsDeposit ? "Kaydın doğrulandı (0.5 Devnet SOL depozito alındı)" : "Bu etkinlik için depozito gerekmiyor"}</span>
+                <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 space-y-1">
+                  <div className="flex items-center justify-center gap-2 font-medium">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{needsDeposit ? `Etkinliğe kayıtlısın (${requiredSol} SOL depozito onaylandı)` : "Bu etkinlik için depozito gerekmiyor"}</span>
+                  </div>
+                  {deposit?.payment_signature && (
+                    <a
+                      href={`https://explorer.solana.com/tx/${deposit.payment_signature}?cluster=devnet`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] text-emerald-200/80 underline hover:text-white"
+                    >
+                      <span>Depozito İşlemini Explorer&apos;da Gör</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
                 </div>
 
                 {isBeforeWindow && windowOpenMs !== null ? (
@@ -698,7 +863,7 @@ function ClaimContent() {
                     ) : (
                       <>
                         <Camera className="w-5 h-5" />
-                        <span>{needsDeposit ? "QR Okut, İadeyi Başlat ve Rozetimi Al" : "Rozetimi Al (QR Okut)"}</span>
+                        <span>{needsDeposit ? `Rozetimi Al & ${requiredSol} SOL İadeyi Başlat (QR Okut)` : "Rozetimi Al (QR Okut)"}</span>
                       </>
                     )}
                   </button>

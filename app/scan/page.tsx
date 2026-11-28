@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Html5Qrcode } from "html5-qrcode";
 import { startScannerSession } from "@/lib/qr-scanner";
-import { Camera, ArrowLeft, AlertCircle, CheckCircle2 } from "lucide-react";
+import { QrCode, ArrowLeft, AlertCircle, Camera } from "lucide-react";
 
 export default function ScanPage() {
   const router = useRouter();
   const [scanError, setScanError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [matchedUrl, setMatchedUrl] = useState<string | null>(null);
   const isRedirectingRef = useRef(false);
 
   useEffect(() => {
@@ -42,7 +41,6 @@ export default function ScanPage() {
               isRedirectingRef.current = true;
               setScanError(null);
               const targetPath = `${parsed.pathname}${parsed.search}`;
-              setMatchedUrl(targetPath);
 
               session.stop()
                 .finally(() => {
@@ -79,47 +77,42 @@ export default function ScanPage() {
   }, [router]);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-6 flex flex-col items-center justify-center">
-      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="mb-5">
+    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center shadow-xl">
+        <div className="text-left mb-6">
           <Link
             href="/"
             className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-400 transition"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Ana Sayfaya Dön</span>
+            <span>Ana Sayfa</span>
           </Link>
         </div>
 
-        <div className="flex items-center gap-2 text-purple-400 font-bold text-lg mb-2">
-          <Camera className="w-5 h-5" />
-          <h1>Etkinlik QR Kodunu Okut</h1>
+        <div className="w-16 h-16 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-4">
+          <QrCode className="w-8 h-8" />
         </div>
-        <p className="text-xs text-slate-400 mb-5">
-          Etkinlik alanındaki ekranda yer alan ÇOMÜ Badge QR kodunu kameraya tutun.
+
+        <h1 className="text-xl font-bold mb-2">Etkinlik QR Kodunu Okut</h1>
+        <p className="text-slate-400 text-sm mb-6">
+          Etkinlik alanındaki ekranda yer alan katılım QR kodunu kameraya gösterin.
         </p>
 
         {cameraError ? (
-          <div className="p-4 bg-red-950/50 border border-red-500/40 rounded-xl text-xs text-red-300">
-            {cameraError}
+          <div className="p-4 bg-red-950/50 border border-red-500/40 rounded-xl text-xs text-red-300 space-y-2">
+            <Camera className="w-6 h-6 text-red-400 mx-auto" />
+            <p>{cameraError}</p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-slate-700 bg-black">
-            <div id="comu-qr-reader" className="w-full" />
+          <div className="overflow-hidden rounded-xl border border-purple-500/40 bg-black">
+            <div id="standalone-qr-reader" className="w-full" />
           </div>
         )}
 
         {scanError && (
-          <div className="mt-4 p-3 bg-amber-950/60 border border-amber-500/40 rounded-xl flex items-start gap-2 text-xs text-amber-200">
+          <div className="mt-4 p-3 bg-amber-950/60 border border-amber-500/40 rounded-xl flex items-start gap-2 text-xs text-amber-200 text-left">
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             <span>{scanError}</span>
-          </div>
-        )}
-
-        {matchedUrl && (
-          <div className="mt-4 p-3 bg-green-950/60 border border-green-500/40 rounded-xl flex items-center gap-2 text-xs text-green-300">
-            <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
-            <span>Etkinlik QR doğrulandı, rozet ekranına yönlendiriliyorsunuz...</span>
           </div>
         )}
       </div>
