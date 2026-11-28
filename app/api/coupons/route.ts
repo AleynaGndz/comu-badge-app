@@ -26,6 +26,9 @@ export async function POST(request: Request) {
         p_user_id: user.id, p_reward_id: rewardId, p_code: createCouponCode(),
       });
       if (!error) return json({ success: true, coupon: data });
+      if (error.code === "PT403" && error.message === "Required verified badge is missing") {
+        return json({ success: false, code: "REQUIRED_BADGE_MISSING", message: "Bu ödül için gerekli doğrulanmış rozete sahip değilsiniz." }, 403);
+      }
       if (error.code === "PT403" && error.message === "Not enough unspent verified badges") {
         const { data: balance, error: balanceError } = await supabase.rpc("coupon_badge_balance", { p_user_id: user.id });
         if (balanceError) throw balanceError;

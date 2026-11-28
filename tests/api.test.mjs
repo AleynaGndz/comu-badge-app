@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import * as jose from 'jose';
+import fs from 'node:fs';
 import { loadTs } from './helpers/load-ts.mjs';
 
 const studentId = '00000000-0000-4000-8000-000000000001';
@@ -33,10 +34,11 @@ function harness(results = [], session = { userId: studentId, walletAddress: add
   const api = loadTs('lib/api.ts', {
     'server-only': {}, '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase },
   }, { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
+  const badgeCatalog = loadTs("lib/badge-catalog.ts", {"@/badges.json": JSON.parse(fs.readFileSync("badges.json", "utf8")), "@/lib/api": api});
   const couponCodes = loadTs("lib/coupon-codes.ts", { "server-only": {} });
   const clubs = loadTs('lib/clubs.ts', { 'server-only': {}, '@/lib/api': api, '@/lib/supabase': { supabase } });
   const load = (file, mocks = {}) => loadTs(file, { 'server-only': {}, '@/lib/api': api,
-    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, '@/lib/deposits': {}, '@/lib/coupon-codes': couponCodes, ...mocks },
+    '@/lib/auth': { getSession: async () => session }, '@/lib/supabase': { supabase }, '@/lib/clubs': clubs, '@/lib/deposits': {}, '@/lib/coupon-codes': couponCodes, '@/lib/badge-catalog': badgeCatalog, ...mocks },
     { console: { error(...args) { errors.push(args.map(String).join(" ")); } } });
   return { load, api, calls, errors };
 }
@@ -266,4 +268,41 @@ test('insufficient coupon credits report the server balance without bypassing at
   const res=await h.load('app/api/coupons/route.ts').POST(post({reward_id:eventId}));
   assert.equal(res.status,403);assert.match((await res.json()).message,/1 rozet/);
   assert.equal(h.calls[1].rpc,'issue_reward_coupon');assert.equal(h.calls[2].rpc,'coupon_badge_balance');
+});
+
+
+test('sponsor reward creation accepts null or exact catalog key and rejects invalid keys',async()=>{
+  for(const key of [undefined,null,'coffee talk','dev3pack']){
+    const h=harness([{data:{...student.data,role:'sponsor'},error:null},{data:{id:eventId,required_badge_key:key??null},error:null}]);
+    const response=await h.load('app/api/rewards/route.ts').POST(post({title:'Coffee',required_badges:1,...(key===undefined?{}:{required_badge_key:key})}));
+    assert.equal(response.status,201);
+    assert.equal(h.calls[1].operations.find(([op])=>op==='insert')[1].required_badge_key,key??null);
+  }
+  for(const key of ['',123,[],{},'unknown-key',' coffee talk ']){
+    const h=harness([{data:{...student.data,role:'sponsor'},error:null}]);
+    assert.equal((await h.load('app/api/rewards/route.ts').POST(post({title:'Coffee',required_badges:1,required_badge_key:key}))).status,400);
+    assert.equal(h.calls.length,1);
+  }
+});
+test('personalized reward listing reports required badge ownership without hiding campaigns',async()=>{
+  const h=harness([{data:[{id:'a',required_badge_key:null},{id:'b',required_badge_key:'dev3pack'},{id:'c',required_badge_key:'android'}],error:null},student,{data:['dev3pack'],error:null}]);
+  const response=await h.load('app/api/rewards/route.ts').GET(new Request('http://localhost/api/rewards?eligibility=true'));
+  assert.equal(response.status,200);
+  assert.deepEqual((await response.json()).rewards.map(r=>r.has_required_badge),[true,true,false]);
+  assert.equal(h.calls[2].params.p_user_id,studentId);
+});
+test('coupon missing-badge error remains 403 with stable frontend error code',async()=>{
+  const h=harness([student,{error:{code:'PT403',message:'Required verified badge is missing'}}]);
+  const response=await h.load('app/api/coupons/route.ts').POST(post({reward_id:eventId}));
+  assert.equal(response.status,403);assert.equal((await response.json()).code,'REQUIRED_BADGE_MISSING');
+  assert.equal(h.calls.length,2);
+});
+test('sponsor eligibility checks a required badge even with enough unspent credits',async()=>{
+  for(const keys of [[],['android'],['dev3pack']]){
+    const h=harness([{data:{...student.data,role:'sponsor'},error:null},{data:{id:eventId,required_badges:1,required_badge_key:'dev3pack',active:true},error:null},
+      {count:3,error:null},student,{data:[],error:null},{data:keys,error:null}]);
+    const response=await h.load('app/api/rewards/eligibility/route.ts').POST(post({reward_id:eventId,wallet_address:address}));
+    assert.equal(response.status,200);const data=await response.json();
+    assert.equal(data.has_required_badge,keys.includes('dev3pack'));assert.equal(data.eligible,keys.includes('dev3pack'));
+  }
 });
