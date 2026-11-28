@@ -689,7 +689,7 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6 pb-4 border-b border-slate-800">
           <div className="flex items-center gap-6">
             <Link
@@ -1095,37 +1095,39 @@ export default function AdminPage() {
                     return (
                       <div
                         key={ev.id}
-                        className="py-4 first:pt-0 last:pb-0 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                        className="py-4 first:pt-0 last:pb-0 flex flex-col xl:flex-row xl:items-center justify-between gap-3"
                       >
-                        <div className="space-y-1.5">
+                        <div className="space-y-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-semibold text-white text-sm">{ev.title}</h3>
+                            <h3 className="font-semibold text-white text-sm truncate">
+                              {ev.title}
+                            </h3>
                             {getEventStatusBadge(ev.event_date)}
                             {ev.badge_key ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30">
                                 <Award className="w-3 h-3" />
-                                <span>Rozet: {ev.badge_key}</span>
+                                <span>{ev.badge_key}</span>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
                                 <Award className="w-3 h-3" />
-                                <span>Rozet Atanmamış</span>
+                                <span>Rozet Yok</span>
                               </span>
                             )}
                           </div>
                           <p className="text-xs text-slate-400">
                             {new Date(ev.event_date).toLocaleString("tr-TR", {
-                              dateStyle: "long",
+                              dateStyle: "medium",
                               timeStyle: "short",
                             })}
                             {" • Depozito: 0.5 SOL"}
                           </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap lg:flex-nowrap items-center gap-1.5 shrink-0">
                           {/* Rozet Seçme ve Güncelleme */}
                           {badgeCatalog.length > 0 && (
-                            <div className="inline-flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-lg p-1">
+                            <div className="inline-flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-lg p-1">
                               <select
                                 value={draftValue}
                                 onChange={(e) =>
@@ -1135,7 +1137,7 @@ export default function AdminPage() {
                                   }))
                                 }
                                 aria-label={`${ev.title} rozet seçimi`}
-                                className="bg-transparent text-xs text-slate-200 px-2 py-1 focus:outline-none cursor-pointer"
+                                className="bg-transparent text-xs text-slate-200 px-1.5 py-0.5 focus:outline-none cursor-pointer max-w-[115px]"
                               >
                                 <option value="" className="bg-slate-900">
                                   Rozet Seç...
@@ -1156,9 +1158,9 @@ export default function AdminPage() {
                                 disabled={
                                   updatingBadgeEventId === ev.id || !draftValue || !isDirty
                                 }
-                                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-semibold px-2.5 py-1 rounded transition cursor-pointer"
+                                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-semibold px-2 py-1 rounded transition cursor-pointer whitespace-nowrap"
                               >
-                                {updatingBadgeEventId === ev.id ? "..." : "Rozeti Kaydet"}
+                                {updatingBadgeEventId === ev.id ? "..." : "Kaydet"}
                               </button>
                             </div>
                           )}
@@ -1166,10 +1168,10 @@ export default function AdminPage() {
                           <button
                             type="button"
                             onClick={() => handleOpenLiveQr(ev)}
-                            className="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
+                            className="inline-flex items-center gap-1 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer whitespace-nowrap"
                           >
-                            <QrCode className="w-4 h-4" />
-                            <span>Canlı QR Aç</span>
+                            <QrCode className="w-3.5 h-3.5" />
+                            <span>Canlı QR</span>
                           </button>
 
                           <button
@@ -1177,14 +1179,14 @@ export default function AdminPage() {
                             onClick={() => handleReconcileDeposits(ev)}
                             disabled={reconcilingEventId === ev.id}
                             title="Bekleyen depozito ve iade işlemlerini blokzincirde kontrol et"
-                            className="inline-flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                            className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                           >
                             {reconcilingEventId === ev.id ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <RefreshCw className="w-3.5 h-3.5" />
                             )}
-                            <span>İadeleri Uzlaştır</span>
+                            <span>Uzlaştır</span>
                           </button>
 
                           <button
@@ -1192,14 +1194,14 @@ export default function AdminPage() {
                             onClick={() => handleDistributeNoShow(ev)}
                             disabled={distributingEventId === ev.id}
                             title="Katılıp gelmeyenlerin 0.5 SOL depozitosunu katılanlara eşit dağıt"
-                            className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                            className="inline-flex items-center gap-1 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                           >
                             {distributingEventId === ev.id ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <Coins className="w-3.5 h-3.5" />
                             )}
-                            <span>Gelmeyenlerin Payını Dağıt</span>
+                            <span>Pay Dağıt</span>
                           </button>
 
                           <button
@@ -1207,7 +1209,7 @@ export default function AdminPage() {
                             onClick={() => handleDeleteEvent(ev)}
                             disabled={deletingEventId === ev.id}
                             title="Etkinliği Sil"
-                            className="p-2 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50"
+                            className="p-1.5 bg-red-950/60 hover:bg-red-600 border border-red-500/40 text-red-300 hover:text-white rounded-lg transition cursor-pointer disabled:opacity-50 shrink-0"
                           >
                             {deletingEventId === ev.id ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
