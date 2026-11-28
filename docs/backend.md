@@ -399,3 +399,13 @@ It does not query current on-chain holders or arbitrary external NFTs. Any event
 using the same key qualifies; this is a badge restriction, not an event-ID filter.
 The badge condition does not add an extra credit charge or burn the NFT.
 Frontend form/selectors/cards are intentionally left for the frontend developer.
+
+Mint reconciliation also uses the currently configured RPC, with the job's saved
+endpoint as fallback, so rotating a provider covers already signed mint jobs.
+For the friend's Coffee Talk incident, the confirmed deposit was preserved. The
+expired refund and mint were backed up and reset with state/signature-matched
+updates only after finalized receipts were absent, blockhashes were invalid,
+heights exceeded expiry, and the complete finalized fee-payer histories excluded
+the signatures. Mint attempt evidence was retained in `failed_attempts`; full
+private backups preserve both original signed jobs. No replacement was sent by
+the repair. Normal claim/refund requests drive the retried jobs.

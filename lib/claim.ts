@@ -38,7 +38,7 @@ export async function processMint(job: MintJob, retryFailed = false) {
   if (job.state === "failed") {
     if (!retryFailed) throw new ApiError("Mint failed on-chain; retry with retry_failed=true", 409);
     if (!job.tx_signature || !job.rpc_url) throw new ApiError("Failed mint record requires operator review", 409);
-    const status = await finalizedMintStatus(mintRpc(job.rpc_url), job.tx_signature);
+    const status = await finalizedMintStatus(mintRpc(process.env.SOLANA_RPC_URL || job.rpc_url), job.tx_signature);
     if (status?.commitment !== "finalized" || !status.error) {
       throw new ApiError("A new mint requires a proven finalized failure", 409);
     }
@@ -79,7 +79,7 @@ export async function processMint(job: MintJob, retryFailed = false) {
   if (!job.tx_signature || !job.rpc_url || !job.signed_transaction || job.last_valid_block_height == null) {
     throw new ApiError("Mint record requires operator review", 409);
   }
-  const umi = mintRpc(job.rpc_url);
+  const umi = mintRpc(process.env.SOLANA_RPC_URL || job.rpc_url);
   const signature = bs58.decode(job.tx_signature);
   try {
     const status = await finalizedMintStatus(umi, job.tx_signature);

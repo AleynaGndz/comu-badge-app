@@ -78,7 +78,7 @@ function setup(options = {}) {
       return { signed_transaction: 'c2lnbmVk', tx_signature: signature,
         last_valid_block_height: 100, rpc_url: 'https://rpc.invalid', tree_address: 'tree' };
     },
-    mintRpc: () => ({ rpc, transactions: { deserialize: data => Buffer.from(data).toString() } }),
+    mintRpc: (endpoint) => { assert.equal(endpoint, "rpc"); return ({ rpc, transactions: { deserialize: data => Buffer.from(data).toString() } }); },
   };
   const { processMint } = loadTs('lib/claim.ts', {
     'server-only': {}, '@/lib/api': { ApiError }, '@/lib/supabase': { supabase: db }, '@/lib/mint': mint,
