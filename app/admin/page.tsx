@@ -692,7 +692,7 @@ export default function AdminPage() {
     userProfile?.role === "admin" || userProfile?.role === "sponsor";
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
+    <main className="min-h-screen bg-transparent text-white p-8">
       <div className="max-w-6xl mx-auto">
         <div className="flex flex-wrap justify-between items-center gap-4 mb-6 pb-4 border-b border-slate-800">
           <div className="flex items-center gap-6">

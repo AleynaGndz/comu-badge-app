@@ -389,7 +389,7 @@ export default function Home() {
     : Math.max(0, totalBadges - spentBadges);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
+    <main className="min-h-screen bg-transparent text-white p-8">
       <nav className="flex flex-wrap justify-between items-center gap-4 max-w-4xl mx-auto pb-8 border-b border-slate-800">
         <div className="flex items-center gap-6">
           <Link
