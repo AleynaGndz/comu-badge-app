@@ -6,13 +6,17 @@ import { supabase } from "@/lib/supabase";
 
 export const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 export class ApiError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public retryAfter?: number) { super(message); }
 }
 export function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 export function apiError(error: unknown) {
-  if (error instanceof ApiError) return json({ success: false, message: error.message }, error.status);
+  if (error instanceof ApiError) {
+    const response = json({ success: false, message: error.message, ...(error.retryAfter ? { retryable: true } : {}) }, error.status);
+    if (error.retryAfter) response.headers.set("Retry-After", String(error.retryAfter));
+    return response;
+  }
   const code = (error as { code?: string })?.code;
   if (code && /^PT[45]\d\d$/.test(code)) {
     return json({ success: false, message: (error as { message: string }).message }, Number(code.slice(2)));

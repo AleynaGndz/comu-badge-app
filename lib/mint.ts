@@ -115,7 +115,11 @@ export async function prepareBadgeMint(walletAddress: string, title: string, met
     };
 }
 
+const readClients = new Map<string, ReturnType<typeof createUmi>>();
+
 // This also works after key rotation: resending a persisted transaction needs no signer.
 export function mintRpc(rpcUrl: string) {
-    return createUmi(rpcUrl).use(mplBubblegum());
+    let umi = readClients.get(rpcUrl);
+    if (!umi) { umi = createUmi(rpcUrl).use(mplBubblegum()); readClients.set(rpcUrl, umi); }
+    return umi;
 }
