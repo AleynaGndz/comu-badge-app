@@ -272,7 +272,7 @@ test('insufficient coupon credits report the server balance without bypassing at
 
 
 test('sponsor reward creation accepts null or exact catalog key and rejects invalid keys',async()=>{
-  for(const key of [undefined,null,'coffee talk','dev3pack']){
+  for(const key of [undefined,null,'CoffeeTalk','dev3pack']){
     const h=harness([{data:{...student.data,role:'sponsor'},error:null},{data:{id:eventId,required_badge_key:key??null},error:null}]);
     const response=await h.load('app/api/rewards/route.ts').POST(post({title:'Coffee',required_badges:1,...(key===undefined?{}:{required_badge_key:key})}));
     assert.equal(response.status,201);
