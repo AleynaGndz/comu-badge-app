@@ -252,3 +252,10 @@ test('sponsor eligibility uses remaining credits and honors already issued unuse
     assert.equal(res.status,200);const data=await res.json();assert.equal(data.badgeCount,0);assert.equal(data.eligible,status==='unused');
   }
 });
+
+
+test('retryable RPC errors return a safe 503 and Retry-After instead of a generic 500',async()=>{
+  const h=harness();const response=h.api.apiError(new h.api.ApiError('Solana servisi yoğun',503,5));
+  assert.equal(response.status,503);assert.equal(response.headers.get('retry-after'),'5');
+  assert.deepEqual(await response.json(),{success:false,message:'Solana servisi yoğun',retryable:true});
+});

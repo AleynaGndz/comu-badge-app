@@ -83,3 +83,31 @@ test('sponsor refuses missing student signature, modified messages and a differe
   const changed=chain.decodeSignedPayment(transaction.serialize({requireAllSignatures:false}).toString('base64'),student.publicKey.toBase58());
   assert.throws(()=>chain.sponsorDepositPayment(changed,expected,student.publicKey.toBase58(),custody),e=>e.status===400);
 });
+
+
+test('RPC clients and genesis checks are shared per endpoint, including concurrent requests',async()=>{
+  let connections=0,checks=0;const configs=[];
+  class Connection {constructor(_url,config){connections++;configs.push(config);}async getGenesisHash(){checks++;await Promise.resolve();return genesis;}}
+  const chain=loadTs('lib/deposit-chain.ts',{'server-only':{},'@/lib/api':{ApiError},'@solana/web3.js':{...web3,Connection}});
+  const clients=await Promise.all(Array.from({length:8},()=>chain.devnetConnection('https://first.invalid')));
+  assert.equal(connections,1);assert.equal(checks,1);assert.ok(clients.every(c=>c===clients[0]));
+  assert.equal(await chain.devnetConnection('https://first.invalid'),clients[0]);assert.equal(checks,1);
+  await chain.devnetConnection('https://second.invalid');assert.equal(connections,2);assert.equal(checks,2);
+  assert.ok(configs.every(c=>c.disableRetryOnRateLimit===true));
+});
+test('RPC 429 errors are sanitized and back off without repeated network calls',async()=>{
+  let calls=0,clock=100000;
+  class Connection {async getGenesisHash(){return genesis;}async getBalance(){calls++;throw Error('429 connection rate limits: https://rpc.invalid?api-key=private-secret');}}
+  const chain=loadTs('lib/deposit-chain.ts',{'server-only':{},'@/lib/api':{ApiError},'@solana/web3.js':{...web3,Connection}},{Date:{now:()=>clock}});
+  const c=await chain.devnetConnection('https://first.invalid');
+  for(let n=0;n<3;n++)await assert.rejects(c.getBalance(),e=>e.status===503&&!e.message.includes('private-secret'));
+  assert.equal(calls,1);clock+=6000;
+  await assert.rejects(c.getBalance(),e=>e.status===503);assert.equal(calls,2);
+});
+test('failed genesis validation is never cached as a verified Devnet connection',async()=>{
+  let checks=0;
+  class Connection {async getGenesisHash(){checks++;if(checks===1)throw Error('network offline');return genesis;}}
+  const chain=loadTs('lib/deposit-chain.ts',{'server-only':{},'@/lib/api':{ApiError},'@solana/web3.js':{...web3,Connection}});
+  await assert.rejects(chain.devnetConnection('https://first.invalid'),e=>e.status===503);
+  await chain.devnetConnection('https://first.invalid');assert.equal(checks,2);
+});

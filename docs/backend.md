@@ -339,3 +339,14 @@ blockhash beyond its last valid height, and absence from the treasury's complete
 finalized transaction history. No transfers were sent during that repair; the
 confirmed payment was left intact. Never clear an ambiguous payment just because
 one RPC request timed out, and never create a new signature for a confirmed job.
+
+
+RPC connections are reused per endpoint across deposit/refund routes, rather than
+creating a fresh keep-alive pool on every poll. Concurrent Devnet genesis checks
+are coalesced and revalidated once per minute. The SDK's rapid automatic 429
+retries are disabled; rate-limited clients enforce a five-second cooldown and
+return a sanitized HTTP 503 with `Retry-After` instead of exposing raw provider
+errors. Custody balance is read once per preparation. Read-only mint clients are
+also reused. Signed transaction persistence and no-duplicate-transfer rules remain
+unchanged. After changing this code in development, restart the dev server to
+release keep-alive pools created by older modules.

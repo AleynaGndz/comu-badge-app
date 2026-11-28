@@ -35,7 +35,8 @@ function payoutView(row: SolPayout) {
 export async function prepareDeposit(userId: string, eventId: string) {
   const signer = depositSigner();
   const connection = await devnetConnection();
-  if (await connection.getBalance(signer.publicKey, "finalized") < 10_000_000) {
+  const treasuryBalance = await connection.getBalance(signer.publicKey, "finalized");
+  if (treasuryBalance < 10_000_000) {
     throw new ApiError("Fund the separate custody wallet with at least 0.01 Devnet SOL for network fees", 503);
   }
   const { data, error } = await supabase.rpc("create_deposit_intent", {
@@ -59,7 +60,7 @@ export async function prepareDeposit(userId: string, eventId: string) {
   if (studentBalance < Number(deposit.lamports)) {
     throw new ApiError("The student wallet needs exactly 0.5 Devnet SOL; network fees are sponsored", 402);
   }
-  if (fee == null || await connection.getBalance(signer.publicKey, "finalized") < fee) {
+  if (fee == null || treasuryBalance < fee) {
     throw new ApiError("Fund the custody wallet for sponsored network fees", 503);
   }
   const encoded = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
@@ -131,7 +132,7 @@ export async function reconcileDeposit(row: Deposit) {
       try {
         const sent = await connection.sendRawTransaction(Buffer.from(row.signed_transaction, "base64"), { skipPreflight: false, maxRetries: 2 });
         if (sent !== row.payment_signature) throw new ApiError("Unexpected deposit signature", 502);
-      } catch (error) { if (error instanceof ApiError) throw error; /* Keep the signed payment for retries. */ }
+      } catch (error) { if (error instanceof ApiError && error.status === 502) throw error; /* Keep the signed payment for retries. */ }
     }
   }
   return { status: 202, deposit: depositView(row) };
@@ -199,7 +200,7 @@ export async function processPayout(row: SolPayout) {
       if (sent !== row.tx_signature) throw new ApiError("Unexpected payout signature", 502);
       const { error } = await supabase.from("sol_payouts").update({ state: "submitted" }).eq("id", row.id).eq("state", "prepared");
       if (error) throw error;
-    } catch (error) { if (error instanceof ApiError) throw error; /* Reconcile/resend the same signed bytes. */ }
+    } catch (error) { if (error instanceof ApiError && error.status === 502) throw error; /* Reconcile/resend the same signed bytes. */ }
   }
   return payoutView(await readPayout(row.id));
 }

@@ -19,11 +19,48 @@ export function depositSigner() {
   }
   return signer;
 }
+type RpcClient = { connection: Connection; verifiedAt: number; checking?: Promise<void> };
+const shared = globalThis as typeof globalThis & { campusDepositRpcClients?: Map<string, RpcClient> };
+const clients = shared.campusDepositRpcClients ??= new Map<string, RpcClient>();
+const guardedMethods = new Set(["getGenesisHash", "getBalance", "getBlockHeight", "getLatestBlockhash", "getFeeForMessage", "getTransaction", "sendRawTransaction"]);
+function guardedConnection(rpcUrl: string) {
+  const connection = new Connection(rpcUrl, { commitment: "finalized", confirmTransactionInitialTimeout: 15000,
+    disableRetryOnRateLimit: true });
+  let blockedUntil = 0;
+  return new Proxy(connection, { get(target, key) {
+    const value = Reflect.get(target, key);
+    if (typeof value !== "function") return value;
+    if (!guardedMethods.has(String(key))) return value.bind(target);
+    return async (...args: unknown[]) => {
+      if (Date.now() < blockedUntil) throw new ApiError("Solana Devnet servisi yoğun; birkaç saniye sonra tekrar deneyin.", 503, Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000)));
+      try { return await value.apply(target, args); }
+      catch (error) {
+        if (error instanceof ApiError) throw error;
+        if (/429|rate.?limit/i.test(String((error as { message?: unknown })?.message ?? ""))) blockedUntil = Date.now() + 5000;
+        // Never expose credential-bearing RPC URLs or raw provider errors.
+        throw new ApiError("Solana Devnet servisi şu an yoğun. 5 saniye bekleyip tekrar deneyin; işlem kaydınız korunuyor.", 503, 5);
+      }
+    };
+  } });
+}
 export async function devnetConnection(rpcUrl = process.env.SOLANA_RPC_URL) {
   if (!rpcUrl) throw new ApiError("SOLANA_RPC_URL is missing", 503);
-  const connection = new Connection(rpcUrl, { commitment: "finalized", confirmTransactionInitialTimeout: 15000 });
-  if (await connection.getGenesisHash() !== DEVNET_GENESIS) throw new ApiError("Deposits are enabled on Solana Devnet only", 503);
-  return connection;
+  let client = clients.get(rpcUrl);
+  if (!client) {
+    client = { connection: guardedConnection(rpcUrl), verifiedAt: 0 };
+    clients.set(rpcUrl, client);
+  }
+  // One keep-alive client per endpoint, including across Next route bundles/HMR.
+  // Coalesce network checks and revalidate at least once per minute.
+  if (Date.now() - client.verifiedAt >= 60000) {
+    const current = client;
+    if (!current.checking) current.checking = (async () => {
+      if (await current.connection.getGenesisHash() !== DEVNET_GENESIS) throw new ApiError("Deposits are enabled on Solana Devnet only", 503);
+      current.verifiedAt = Date.now();
+    })();
+    try { await current.checking; } finally { current.checking = undefined; }
+  }
+  return client.connection;
 }
 export async function prepareSolTransfer(connection: Connection, from: string, to: string, lamports: number, reference: string, feePayer = from) {
   if (!Number.isSafeInteger(lamports) || lamports <= 0) throw new ApiError("Invalid transfer amount", 500);
