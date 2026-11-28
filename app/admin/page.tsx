@@ -61,6 +61,7 @@ interface RewardItem {
   title: string;
   description?: string | null;
   required_badges: number;
+  required_badge_key?: string | null;
   active?: boolean;
 }
 
@@ -111,6 +112,7 @@ export default function AdminPage() {
   const [newRewardTitle, setNewRewardTitle] = useState("");
   const [newRewardDesc, setNewRewardDesc] = useState("");
   const [newRewardBadges, setNewRewardBadges] = useState(1);
+  const [newRewardBadgeKey, setNewRewardBadgeKey] = useState("");
   const [creatingReward, setCreatingReward] = useState(false);
   const [rewardMsg, setRewardMsg] = useState<{
     type: "success" | "error";
@@ -559,6 +561,7 @@ export default function AdminPage() {
           title: newRewardTitle.trim(),
           description: newRewardDesc.trim(),
           required_badges: Number(newRewardBadges) || 1,
+          required_badge_key: newRewardBadgeKey || null,
         }),
       });
       const data = await res.json();
@@ -574,6 +577,7 @@ export default function AdminPage() {
       setNewRewardTitle("");
       setNewRewardDesc("");
       setNewRewardBadges(1);
+      setNewRewardBadgeKey("");
       setRewardMsg({
         type: "success",
         text: `"${data.reward.title}" sponsor kampanyası yayınlandı!`,
@@ -1234,7 +1238,7 @@ export default function AdminPage() {
                 <h2>Yeni Sponsor Kampanyası Oluştur (Sponsor Hesabı)</h2>
               </div>
 
-              <form onSubmit={handleCreateReward} className="grid sm:grid-cols-4 gap-3 items-end">
+              <form onSubmit={handleCreateReward} className="grid sm:grid-cols-5 gap-3 items-end">
                 <div className="sm:col-span-2">
                   <label className="block text-xs text-slate-400 mb-1">Kampanya Başlığı</label>
                   <input
@@ -1258,6 +1262,24 @@ export default function AdminPage() {
                     onChange={(e) => setNewRewardBadges(Number(e.target.value))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Özel Rozet Şartı (Opsiyonel)
+                  </label>
+                  <select
+                    value={newRewardBadgeKey}
+                    onChange={(e) => setNewRewardBadgeKey(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="">Genel (Herhangi Rozet)</option>
+                    {badgeCatalog.map((b) => (
+                      <option key={b.badge_key} value={b.badge_key}>
+                        Sadece: {b.badge_key}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <button

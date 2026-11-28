@@ -53,16 +53,24 @@ interface RewardCampaign {
   title: string;
   description?: string | null;
   required_badges: number;
+  required_badge_key?: string | null;
+  has_required_badge?: boolean;
   expires_at?: string | null;
 }
 
 interface StudentCoupon {
-  badge_cost?: number;
   id: string;
   reward_id: string;
   code: string;
   status?: string;
   used_at?: string | null;
+  badge_cost?: number;
+}
+
+interface ServerBalance {
+  available: number;
+  spent: number;
+  total: number;
 }
 
 const BADGE_LABELS: Record<string, { title: string; desc: string }> = {
@@ -117,6 +125,7 @@ export default function Home() {
   const [myBadges, setMyBadges] = useState<BadgeItem[]>([]);
   const [rewards, setRewards] = useState<RewardCampaign[]>([]);
   const [myCoupons, setMyCoupons] = useState<StudentCoupon[]>([]);
+  const [serverBalance, setServerBalance] = useState<ServerBalance | null>(null);
   const [couponLoadingId, setCouponLoadingId] = useState<string | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
 
@@ -158,11 +167,10 @@ export default function Home() {
     const logoutServerSession = async () => {
       try {
         await fetch("/api/auth/logout", { method: "POST" });
-      } catch {
-        // Ağ hatası olsa bile yerel state temizlenir
-      }
+      } catch {}
       setUserProfile(null);
       setMyCoupons([]);
+      setServerBalance(null);
     };
 
     if (!currentWallet) {
@@ -171,6 +179,7 @@ export default function Home() {
       } else {
         setUserProfile(null);
         setMyCoupons([]);
+        setServerBalance(null);
       }
       setMyBadges([]);
       return;
@@ -206,10 +215,11 @@ export default function Home() {
       .catch(() => setMyBadges([]));
   }, [publicKey]);
 
-  // Oturum açıldığında öğrencinin mevcut kuponlarını çek
+  // Oturum açıldığında kuponları, gerçek bakiyeyi ve rozet uygunluklarını çek
   useEffect(() => {
     if (!userProfile) {
       setMyCoupons([]);
+      setServerBalance(null);
       return;
     }
 
@@ -218,6 +228,22 @@ export default function Home() {
       .then((data) => {
         if (data.success && Array.isArray(data.coupons)) {
           setMyCoupons(data.coupons);
+        }
+        if (data.success && data.balance) {
+          setServerBalance({
+            available: Number(data.balance.available ?? 0),
+            spent: Number(data.balance.spent ?? 0),
+            total: Number(data.balance.total ?? 0),
+          });
+        }
+      })
+      .catch(() => {});
+
+    fetch("/api/rewards?eligibility=true")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.rewards)) {
+          setRewards(data.rewards);
         }
       })
       .catch(() => {});
@@ -326,13 +352,21 @@ export default function Home() {
         throw new Error(data.message || "Kupon oluşturulamadı.");
       }
 
-      setMyCoupons((prev) => {
-        const exists = prev.some((c) => c.reward_id === rewardId);
-        if (exists) {
-          return prev.map((c) => (c.reward_id === rewardId ? data.coupon : c));
+      // Kupon listesini ve sunucu bakiyesini tazele
+      const refreshRes = await fetch("/api/coupons");
+      const refreshData = await refreshRes.json();
+      if (refreshData.success) {
+        if (Array.isArray(refreshData.coupons)) setMyCoupons(refreshData.coupons);
+        if (refreshData.balance) {
+          setServerBalance({
+            available: Number(refreshData.balance.available ?? 0),
+            spent: Number(refreshData.balance.spent ?? 0),
+            total: Number(refreshData.balance.total ?? 0),
+          });
         }
-        return [...prev, data.coupon];
-      });
+      } else {
+        setMyCoupons((prev) => [...prev, data.coupon]);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Kupon alma başarısız.";
       setCouponError(msg);
@@ -342,11 +376,17 @@ export default function Home() {
   };
 
   const catalogEntries = Object.entries(badgesCatalog);
-  const totalBadges = myBadges.length;
-  const spentBadges = myCoupons.reduce((sum, coupon) => {
-    return sum + Number(coupon.badge_cost ?? 0);
-  }, 0);
-  const badgeCount = Math.max(0, totalBadges - spentBadges);
+  const totalBadges = serverBalance ? serverBalance.total : myBadges.length;
+  const spentBadges = serverBalance
+    ? serverBalance.spent
+    : myCoupons.reduce((sum, coupon) => {
+        if (typeof coupon.badge_cost === "number") return sum + coupon.badge_cost;
+        const matched = rewards.find((r) => r.id === coupon.reward_id);
+        return sum + (matched ? Number(matched.required_badges) || 0 : 0);
+      }, 0);
+  const badgeCount = serverBalance
+    ? serverBalance.available
+    : Math.max(0, totalBadges - spentBadges);
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
@@ -480,7 +520,7 @@ export default function Home() {
           <div id="koleksiyonum" className="mb-12 scroll-mt-8">
             <div className="flex items-center gap-2 mb-4">
               <Sparkles className="w-5 h-5 text-yellow-400" />
-              <h2 className="text-lg font-bold">Koleksiyonum ({totalBadges} Rozet)</h2>
+              <h2 className="text-lg font-bold">Koleksiyonum ({myBadges.length} Rozet)</h2>
             </div>
 
             {myBadges.length > 0 ? (
@@ -539,7 +579,13 @@ export default function Home() {
           {rewards.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {rewards.map((reward) => {
-                const isUnlocked = badgeCount >= reward.required_badges;
+                const requiresSpecificBadge = Boolean(reward.required_badge_key);
+                const hasSpecificBadge = requiresSpecificBadge
+                  ? Boolean(reward.has_required_badge)
+                  : true;
+                const hasEnoughCount = badgeCount >= reward.required_badges;
+                const isUnlocked = hasEnoughCount && hasSpecificBadge;
+
                 const missing = Math.max(0, reward.required_badges - badgeCount);
                 const progressPct = Math.min(
                   100,
@@ -547,6 +593,9 @@ export default function Home() {
                 );
                 const existingCoupon = myCoupons.find((c) => c.reward_id === reward.id);
                 const isUsed = existingCoupon?.status === "used" || Boolean(existingCoupon?.used_at);
+                const specificBadgeLabel = reward.required_badge_key
+                  ? BADGE_LABELS[reward.required_badge_key]?.title || reward.required_badge_key
+                  : null;
 
                 return (
                   <div
@@ -581,7 +630,7 @@ export default function Home() {
                           {existingCoupon ? (
                             <>
                               <Check className="w-3 h-3" />
-                              <span>{existingCoupon.badge_cost ?? 0} Rozet Harcandı</span>
+                              <span>{reward.required_badges} Rozet Harcandı</span>
                             </>
                           ) : isUnlocked ? (
                             <>
@@ -596,6 +645,15 @@ export default function Home() {
                           )}
                         </span>
                       </div>
+
+                      {specificBadgeLabel && (
+                        <div className="mb-2">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            <Award className="w-3 h-3" />
+                            <span>Özel Şart: {specificBadgeLabel}</span>
+                          </span>
+                        </div>
+                      )}
 
                       <h3 className="text-base font-bold text-white">{reward.title}</h3>
                       {reward.description && (
@@ -642,6 +700,10 @@ export default function Home() {
                             </span>
                           )}
                         </button>
+                      ) : requiresSpecificBadge && !hasSpecificBadge ? (
+                        <div className="text-[11px] text-amber-300/90 bg-amber-950/30 border border-amber-500/20 rounded-lg p-2.5 text-center">
+                          Bu ödül için <strong>{specificBadgeLabel}</strong> rozetine sahip olmalısın.
+                        </div>
                       ) : (
                         <div className="space-y-1.5">
                           <div className="flex justify-between text-[11px] text-slate-400">
